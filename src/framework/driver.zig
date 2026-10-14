@@ -737,7 +737,7 @@ fn crashViewOf(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io,
         .subject = subjectName(Subject, failure),
         .subject_file = subjectFile(Subject, failure),
         .token = failure.token,
-        .inputs = try inputsOf(Subject, allocator, failure),
+        .parameters = try parametersOf(Subject, allocator, io, args, failure, trace.arguments),
         .command = command,
         .sources_root = args.sources_root,
         .repository = args.repository,
@@ -760,31 +760,45 @@ fn subjectFile(comptime Subject: type, failure: worker.Failure) []const u8 {
     return Subject.function_entries[failure.index].file;
 }
 
-// The values a failed call was made with, in words, one per parameter: the name of the value
-// factory for a factory choice and `the 2nd boundary value` and the like for the rest. Empty for a
-// scenario or a token that cannot be read.
-fn inputsOf(comptime Subject: type, allocator: std.mem.Allocator, failure: worker.Failure) ![]const u8 {
+// What a failed call was made with, one per parameter: its name from the function's declaration,
+// and either the value factory that filled it, with where it is, or the value the call wrote. Empty for a scenario or a token that cannot be read.
+fn parametersOf(
+    comptime Subject: type,
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    args: args_mod.Args,
+    failure: worker.Failure,
+    values: []const []const u8,
+) ![]const crash_view.Parameter {
     if (failure.is_scenario or comptime Subject.function_entries.len == 0) {
-        return "";
+        return &.{};
     }
-    var plan = plan_mod.parse(allocator, failure.token) catch return "";
+    var plan = plan_mod.parse(allocator, failure.token) catch return &.{};
     defer plan.deinit();
     const entry = Subject.function_entries[failure.index];
-    var text: std.Io.Writer.Allocating = .init(allocator);
+    const source = readSource(allocator, io, args.sources_root, entry.file) catch "";
+    const names = crash_view.parameterNames(allocator, source, entry.name) catch &.{};
+
+    var parameters: std.ArrayList(crash_view.Parameter) = .empty;
     for (plan.choices, 0..) |choice, position| {
-        if (position != 0) {
-            try text.writer.writeAll(", ");
-        }
+        var parameter: crash_view.Parameter = .{
+            .name = if (position < names.len) names[position] else try std.fmt.allocPrint(allocator, "parameter {d}", .{position + 1}),
+            .value = if (position < values.len) values[position] else "",
+        };
         if (choice.source == .factory) {
-            if (entry.factory_name(position, choice.index)) |name| {
-                try text.writer.writeAll(name);
-                continue;
+            if (entry.factory_of(position, choice.index)) |factory| {
+                const file = if (factory.namespace < entry.factory_files.len) entry.factory_files[factory.namespace] else "";
+                const sim_source = readSource(allocator, io, args.sources_root, file) catch "";
+                parameter.factory = .{
+                    .name = factory.name,
+                    .file = file,
+                    .line = (try crash_view.factoryLine(allocator, sim_source, factory.name)) orelse 0,
+                };
             }
         }
-        const number = @as(usize, choice.index) + 1;
-        try text.writer.print("the {d}{s} {t} value", .{ number, crash_view.ordinalSuffix(number), choice.source });
+        try parameters.append(allocator, parameter);
     }
-    return text.written();
+    return parameters.items;
 }
 
 // Says how many files' results came from the cache. Silent when none did.

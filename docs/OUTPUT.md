@@ -156,14 +156,26 @@ Exit code: 1.
 
 ## A crash
 
-Faultline shows where a call crashed: the file, line and column in the heading, what crashed and how, the values it was called with, the failure Faultline injected, your code with a mark under the place and the stack trace from the command down to the panic, then a hint for that kind of crash. It finds the place by replaying the call once more with its stack trace, which only the crashes it shows pay for. When the panic is inside the standard library, it shows that line too, above the line of your code that called it, and a replay leaves out the `Reproduce it with:` line because the command is at the root of the stack trace.
+Faultline shows where a call crashed: the file, line and column in the heading, what crashed and how, the failure Faultline injected, the declaration of the function Faultline called, each parameter with the value factory that filled it (with its file and line) or the value it was given, your code with a mark under the place and the stack trace from the command down to the panic, then a hint for that kind of crash. It finds the place by replaying the call once more with its stack trace, which only the crashes it shows pay for. When the panic is inside the standard library, it shows that line too, above the line of your code that called it, and a replay leaves out the `Reproduce it with:` line because the command is at the root of the stack trace.
 
 ```
 -- CRASH ------------------------------------------------------------------ words.zig:9:51
 
 firstWord in words.zig crashed: panic: attempt to unwrap error: OutOfMemory
-It was called with the 1st boundary value, the 2nd boundary value.
 Faultline made the 1st allocator call fail with "allocation fails", in allocBytesWithAlignment at std/mem/Allocator.zig:300.
+
+Faultline called firstWord at words.zig:7:
+
+5 | // The first word of the text, in memory of its own. The `catch unreachable` says an allocation
+6 | // cannot fail, and Faultline injects the failure that proves it can.
+7 | pub fn firstWord(allocator: std.mem.Allocator, text: []const u8) []u8 {
+           ^
+
+Called with:
+    allocator = the allocator Faultline supplies
+    text      = "a"
+
+It panicked at words.zig:9:
 
 7 | pub fn firstWord(allocator: std.mem.Allocator, text: []const u8) []u8 {
 8 |     const end = std.mem.indexOfScalar(u8, text, ' ') orelse text.len;

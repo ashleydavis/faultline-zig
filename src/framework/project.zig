@@ -75,10 +75,13 @@ pub const FunctionEntry = struct {
     // calls for its parent: a call that crashes takes the process with it.
     run_here: *const fn (request: call_mod.Request, out: *std.Io.Writer) void,
 
-    // The name of the value factory a factory choice at `index` picks for the parameter at
-    // `position`, or null when that parameter has none, for saying which values a call was made
-    // with.
-    factory_name: *const fn (position: usize, index: usize) ?[]const u8 = Unreachable.factoryName,
+    // The value factory a factory choice at `index` picks for the parameter at `position`, or null
+    // when that parameter has none, for saying which values a call was made with.
+    factory_of: *const fn (position: usize, index: usize) ?call_mod.Factory = Unreachable.factoryOf,
+
+    // The sim files whose value factories the function is called with, in the order they are
+    // searched, so a factory's namespace can be named by its file.
+    factory_files: []const []const u8 = &.{},
 };
 
 // A sim file and the source file it belongs to.
@@ -114,7 +117,7 @@ const Unreachable = struct {
 
     fn runHere(_: call_mod.Request, _: *std.Io.Writer) void {}
 
-    fn factoryName(_: usize, _: usize) ?[]const u8 {
+    fn factoryOf(_: usize, _: usize) ?call_mod.Factory {
         return null;
     }
 };
@@ -191,6 +194,22 @@ pub fn Project(comptime files: anytype) type {
             return locators.Combined(found);
         }
 
+        // The paths of the sim files `FactoriesFor(source_path)` searches, in the same order.
+        fn factoryFilesFor(comptime source_path: []const u8) []const []const u8 {
+            var found: []const []const u8 = &.{};
+            for (files.simulations) |simulation| {
+                if (std.mem.eql(u8, simulation.source, source_path)) {
+                    found = found ++ [1][]const u8{simulation.path};
+                }
+            }
+            for (files.simulations) |simulation| {
+                if (isGlobal(simulation.path) and !std.mem.eql(u8, simulation.source, source_path)) {
+                    found = found ++ [1][]const u8{simulation.path};
+                }
+            }
+            return found;
+        }
+
         // Whether the sim file at `path` holds value factories used for every file.
         fn isGlobal(comptime path: []const u8) bool {
             return std.mem.eql(u8, std.fs.path.basename(path), global_sim_name);
@@ -249,7 +268,8 @@ pub fn Project(comptime files: anytype) type {
                 .list_specs = Runner.listSpecs,
                 .attempt = Wrapper.attempt,
                 .run_here = Wrapper.runHere,
-                .factory_name = Runner.factoryName,
+                .factory_of = Runner.factoryOf,
+                .factory_files = factoryFilesFor(path),
             };
         }
 

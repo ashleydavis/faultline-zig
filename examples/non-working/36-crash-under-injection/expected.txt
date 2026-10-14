@@ -15,8 +15,20 @@ Fault testing
 -- CRASH ------------------------------------------------------------------ words.zig:9:51
 
 firstWord in words.zig crashed: panic: attempt to unwrap error: OutOfMemory
-It was called with the 1st boundary value, the 2nd boundary value.
 Faultline made the 1st allocator call fail with "allocation fails", in allocBytesWithAlignment at std/mem/Allocator.zig:300.
+
+Faultline called firstWord at words.zig:7:
+
+5 | // The first word of the text, in memory of its own. The `catch unreachable` says an allocation
+6 | // cannot fail, and Faultline injects the failure that proves it can.
+7 | pub fn firstWord(allocator: std.mem.Allocator, text: []const u8) []u8 {
+           ^
+
+Called with:
+    allocator = the allocator Faultline supplies
+    text      = "a"
+
+It panicked at words.zig:9:
 
 7 | pub fn firstWord(allocator: std.mem.Allocator, text: []const u8) []u8 {
 8 |     const end = std.mem.indexOfScalar(u8, text, ' ') orelse text.len;

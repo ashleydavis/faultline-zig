@@ -242,3 +242,30 @@ test "a scenario that holds is reported as returned and its sim file's expectati
 
     try std.testing.expectEqualStrings("alwaysFalse", report.result.?.expectation_failed.function);
 }
+
+test "writeValue writes a string in quotes, Faultline's own values by what they are and the rest as Zig does" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try call.writeValue(&out.writer, @as([]const u8, "a\"b"));
+    try out.writer.writeByte('|');
+    try call.writeValue(&out.writer, std.testing.allocator);
+    try out.writer.writeByte('|');
+    try call.writeValue(&out.writer, @as(usize, 7));
+    try out.writer.writeByte('|');
+    try call.writeValue(&out.writer, true);
+
+    try std.testing.expectEqualStrings("\"a\\\"b\"|the allocator Faultline supplies|7|true", out.written());
+}
+
+test "writeValue writes the strings inside a struct and an optional as strings" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const Package = struct { name: []const u8, size: u8, note: ?[]const u8 };
+
+    try call.writeValue(&out.writer, Package{ .name = "a", .size = 3, .note = null });
+    try out.writer.writeByte('|');
+    try call.writeValue(&out.writer, @as(?[]const u8, "b"));
+
+    try std.testing.expectEqualStrings(".{ .name = \"a\", .size = 3, .note = null }|\"b\"", out.written());
+}

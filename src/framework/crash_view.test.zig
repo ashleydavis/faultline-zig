@@ -128,7 +128,10 @@ test "write shows the inputs, the injected failure, both places in code, the sta
         .subject = "run",
         .subject_file = "src/cmd/add.zig",
         .token = "src/cmd/add.zig:run;seed=1;values=f0;fail=delete#1/not_a_directory",
-        .inputs = "projectWithOnePackage, fromOnly",
+        .parameters = &.{
+            .{ .name = "ctx", .factory = .{ .name = "projectWithOnePackage", .file = "src/cmd/global.sim.zig", .line = 41 } },
+            .{ .name = "global", .value = "false" },
+        },
         .command = "zig build flt -Dreplay=\"t\"",
         .sources_root = copy,
         .repository = repository,
@@ -139,7 +142,7 @@ test "write shows the inputs, the injected failure, both places in code, the sta
     try std.testing.expect(std.mem.indexOf(u8, text, " src/lib/from.zig:3:38\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "run in src/cmd/add.zig crashed: NotDir reached an `unreachable` in deleteTree.\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Zig's message: panic: attempt to unwrap error: NotDir\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "It was called with projectWithOnePackage, fromOnly.\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Called with:\n    ctx    = projectWithOnePackage, a value factory at src/cmd/global.sim.zig:41\n    global = false\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Faultline made the 2nd delete call fail with \"not a directory\", in deleteFile at std/Io/Dir.zig:1005.\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "It panicked in deleteTree at std/Io/Dir.zig:2:\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "2 |         error.NotDir => unreachable,\n") != null);
@@ -200,4 +203,81 @@ test "write colours the heading, the mark under the place and the hint when colo
     try std.testing.expect(std.mem.indexOf(u8, text, "\x1b[36m\x1b[1ma.zig:2:11\x1b[0m") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\x1b[31m\x1b[1m^\x1b[0m") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\x1b[32m\x1b[1mHint:\x1b[0m") != null);
+}
+
+test "parse reads the arguments the call wrote, by position" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const trace = try crash_view.parse(arena.allocator(), "argument 0: the allocator Faultline supplies\nargument 1: \"abc\"\nargument 2: 7\npanic: integer overflow\n");
+
+    try std.testing.expectEqual(@as(usize, 3), trace.arguments.len);
+    try std.testing.expectEqualStrings("\"abc\"", trace.arguments[1]);
+    try std.testing.expectEqualStrings("7", trace.arguments[2]);
+}
+
+test "parameterNames reads the names of a function's parameters and of a method's by its own name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = "fn other(a: u8) void {}\nconst Box = struct {\n    fn put(self: *Box, item: u8, _: bool) void {}\n};\nfn printItem(ctx: u8, item: u8, width: usize) void {}\n";
+
+    const plain = try crash_view.parameterNames(arena.allocator(), source, "printItem");
+    try std.testing.expectEqual(@as(usize, 3), plain.len);
+    try std.testing.expectEqualStrings("width", plain[2]);
+    const method = try crash_view.parameterNames(arena.allocator(), source, "Box.put");
+    try std.testing.expectEqualStrings("self", method[0]);
+    try std.testing.expectEqualStrings("_", method[2]);
+    try std.testing.expectEqual(@as(usize, 0), (try crash_view.parameterNames(arena.allocator(), source, "missing")).len);
+}
+
+test "factoryLine finds the line a value factory is declared on" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = "const std = @import(\"std\");\n\n//\n// `skl list` in a project.\n//\npub fn projectWithOnePackage() u8 {\n    return 1;\n}\n";
+
+    try std.testing.expectEqual(@as(?u32, 6), try crash_view.factoryLine(arena.allocator(), source, "projectWithOnePackage"));
+    try std.testing.expectEqual(@as(?u32, null), try crash_view.factoryLine(arena.allocator(), source, "missing"));
+}
+
+test "declarationOf finds where a function's name is declared, a method by its own name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = "// A box.\nconst Box = struct {\n    fn put(self: *Box) void {}\n};\npub fn run(ctx: u8) void {}\n";
+
+    const run = (try crash_view.declarationOf(arena.allocator(), source, "run")).?;
+    try std.testing.expectEqual(@as(u32, 5), run.line);
+    try std.testing.expectEqual(@as(u32, 8), run.column);
+    const put = (try crash_view.declarationOf(arena.allocator(), source, "Box.put")).?;
+    try std.testing.expectEqual(@as(u32, 3), put.line);
+    try std.testing.expect((try crash_view.declarationOf(arena.allocator(), source, "missing")) == null);
+}
+
+test "write shows the declaration of the function Faultline called above what it was called with" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+    try directory.dir.writeFile(std.testing.io, .{ .sub_path = "a.zig", .data = "// Takes one off.\npub fn less(width: usize) usize {\n    return width - 1;\n}\n" });
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const length = try directory.dir.realPath(std.testing.io, &path_buffer);
+    const root = path_buffer[0..length];
+    const trace: crash_view.Trace = .{
+        .message = "integer overflow",
+        .stack = &.{.{ .path = try std.fmt.allocPrint(allocator, "{s}/a.zig", .{root}), .line = 3, .column = 18, .function = "less" }},
+    };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+
+    try crash_view.write(&out.writer, allocator, std.testing.io, trace, .{
+        .subject = "less",
+        .subject_file = "a.zig",
+        .token = "a.zig:less;seed=1;values=b0",
+        .parameters = &.{.{ .name = "width", .value = "0" }},
+        .sources_root = "/no/copy",
+        .repository = root,
+    });
+
+    const text = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, text, "Faultline called less at a.zig:2:\n\n1 | // Takes one off.\n2 | pub fn less(width: usize) usize {\n" ++ " " ** (1 + 3 + 7) ++ "^\n\nCalled with:\n    width = 0\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "It panicked at a.zig:3:\n") != null);
 }

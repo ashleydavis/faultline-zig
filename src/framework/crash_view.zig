@@ -37,6 +37,10 @@ pub const Trace = struct {
 
     // The stack when the code panicked, innermost first.
     stack: []const Frame = &.{},
+
+    // What each argument of the call was, as the call wrote it before it was made, by position.
+    // Empty for a trace that has none, such as a scenario's.
+    arguments: []const []const u8 = &.{},
 };
 
 // Reads what a traced replay wrote. Lines that are not frames, such as the source line and the
@@ -48,6 +52,7 @@ pub fn parse(allocator: std.mem.Allocator, written: []const u8) !Trace {
     var trace: Trace = .{};
     var origin: std.ArrayList(Frame) = .empty;
     var stack: std.ArrayList(Frame) = .empty;
+    var arguments: std.ArrayList([]const u8) = .empty;
     var into = &stack;
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line| {
@@ -57,13 +62,106 @@ pub fn parse(allocator: std.mem.Allocator, written: []const u8) !Trace {
             into = &origin;
         } else if (std.mem.eql(u8, line, "stack trace:")) {
             into = &stack;
+        } else if (argumentOf(line)) |argument| {
+            while (arguments.items.len < argument.position) {
+                try arguments.append(allocator, "");
+            }
+            if (arguments.items.len == argument.position) {
+                try arguments.append(allocator, argument.value);
+            }
         } else if (frameOf(line)) |frame| {
             try into.append(allocator, frame);
         }
     }
     trace.origin = origin.items;
     trace.stack = stack.items;
+    trace.arguments = arguments.items;
     return trace;
+}
+
+// The position and value of a line `argument <position>: <value>`, or null for any other line.
+fn argumentOf(line: []const u8) ?struct { position: usize, value: []const u8 } {
+    const prefix = "argument ";
+    if (!std.mem.startsWith(u8, line, prefix)) {
+        return null;
+    }
+    const colon = std.mem.indexOf(u8, line, ": ") orelse return null;
+    const position = std.fmt.parseInt(usize, line[prefix.len..colon], 10) catch return null;
+    return .{ .position = position, .value = line[colon + 2 ..] };
+}
+
+// The names of the parameters of the function called `function` in `source`, in order: the first
+// declaration of that name, so a method is found by its own name without its owner's. Empty when
+// the source does not parse or has no such function.
+pub fn parameterNames(allocator: std.mem.Allocator, source: [:0]const u8, function: []const u8) ![]const []const u8 {
+    const bare = if (std.mem.lastIndexOfScalar(u8, function, '.')) |dot| function[dot + 1 ..] else function;
+    var tree = try std.zig.Ast.parse(allocator, source, .zig);
+    defer tree.deinit(allocator);
+    if (tree.errors.len != 0) {
+        return &.{};
+    }
+    var index: u32 = 0;
+    while (index < tree.nodes.len) : (index += 1) {
+        const node: std.zig.Ast.Node.Index = @enumFromInt(index);
+        if (tree.nodeTag(node) != .fn_decl) {
+            continue;
+        }
+        var buffer: [1]std.zig.Ast.Node.Index = undefined;
+        const proto = tree.fullFnProto(&buffer, node) orelse continue;
+        const name_token = proto.name_token orelse continue;
+        if (!std.mem.eql(u8, tree.tokenSlice(name_token), bare)) {
+            continue;
+        }
+        var names: std.ArrayList([]const u8) = .empty;
+        var parameters = proto.iterate(&tree);
+        while (parameters.next()) |parameter| {
+            const name = if (parameter.name_token) |token| tree.tokenSlice(token) else "_";
+            try names.append(allocator, try allocator.dupe(u8, name));
+        }
+        return names.items;
+    }
+    return &.{};
+}
+
+// Where the function called `function` is declared in `source`: the line and column of its name,
+// for the first declaration of that name. Null when the source does not parse or has none.
+pub fn declarationOf(allocator: std.mem.Allocator, source: [:0]const u8, function: []const u8) !?struct { line: u32, column: u32 } {
+    const bare = if (std.mem.lastIndexOfScalar(u8, function, '.')) |dot| function[dot + 1 ..] else function;
+    var tree = try std.zig.Ast.parse(allocator, source, .zig);
+    defer tree.deinit(allocator);
+    if (tree.errors.len != 0) {
+        return null;
+    }
+    var index: u32 = 0;
+    while (index < tree.nodes.len) : (index += 1) {
+        const node: std.zig.Ast.Node.Index = @enumFromInt(index);
+        if (tree.nodeTag(node) != .fn_decl) {
+            continue;
+        }
+        var buffer: [1]std.zig.Ast.Node.Index = undefined;
+        const proto = tree.fullFnProto(&buffer, node) orelse continue;
+        const name_token = proto.name_token orelse continue;
+        if (!std.mem.eql(u8, tree.tokenSlice(name_token), bare)) {
+            continue;
+        }
+        const location = tree.tokenLocation(0, name_token);
+        return .{ .line = @intCast(location.line + 1), .column = @intCast(location.column + 1) };
+    }
+    return null;
+}
+
+// The line, counting from one, of `pub fn <name>(` in the sim file `source`, or null when the file
+// does not declare it.
+pub fn factoryLine(allocator: std.mem.Allocator, source: []const u8, name: []const u8) !?u32 {
+    const declaration = try std.fmt.allocPrint(allocator, "pub fn {s}(", .{name});
+    var number: u32 = 1;
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    while (lines.next()) |line| : (number += 1) {
+        if (std.mem.startsWith(u8, std.mem.trim(u8, line, " "), declaration)) {
+            return number;
+        }
+    }
+    return null;
 }
 
 // `text` with every terminal colour code taken out: an escape, `[`, any digits and semicolons, and
@@ -236,6 +334,30 @@ pub fn plainMessage(allocator: std.mem.Allocator, message: []const u8, line: []c
     return null;
 }
 
+// One parameter of the call that crashed and what it was given.
+pub const Parameter = struct {
+    // The parameter's name in the function's declaration.
+    name: []const u8,
+
+    // The value, as the call wrote it, for a parameter no value factory filled.
+    value: []const u8 = "",
+
+    // The value factory that filled it, if one did.
+    factory: ?Factory = null,
+};
+
+// A value factory that filled a parameter, and where to read about it.
+pub const Factory = struct {
+    // Its name in the sim file.
+    name: []const u8,
+
+    // The sim file, relative to the project root.
+    file: []const u8,
+
+    // The line it is declared on, or zero when it was not found.
+    line: u32 = 0,
+};
+
 // Everything the view of one crash shows besides the trace.
 pub const Crash = struct {
     // The function or scenario that was called.
@@ -247,8 +369,8 @@ pub const Crash = struct {
     // The replay token of the call.
     token: []const u8,
 
-    // The values the call was made with, in words, such as the names of the value factories.
-    inputs: []const u8 = "",
+    // What the call was made with, one per parameter.
+    parameters: []const Parameter = &.{},
 
     // The command the crash started from, shown at the root of the stack trace: `zig build flt`
     // for a run, or the replay command for a replay.
@@ -309,9 +431,6 @@ pub fn write(writer: *std.Io.Writer, allocator: std.mem.Allocator, io: std.Io, t
     } else {
         try writer.print("{s}{s}{s} crashed: {s}panic: {s}{s}\n", .{ style.bold(), subject, style.reset(), style.red(), message, style.reset() });
     }
-    if (crash.inputs.len != 0) {
-        try writer.print("It was called with {s}{s}{s}.\n", .{ style.bold(), crash.inputs, style.reset() });
-    }
     const origin = originOf(trace.origin, crash);
     if (injected) |described| {
         if (origin) |source| {
@@ -334,18 +453,61 @@ pub fn write(writer: *std.Io.Writer, allocator: std.mem.Allocator, io: std.Io, t
         try writer.print("The error came from {s}{s}{s} at {s}{s}:{d}{s}.\n", .{ style.bold(), source.function, style.reset(), style.cyan(), locationOf(source, crash), source.line, style.reset() });
     }
 
+    try writeParameters(writer, allocator, io, crash);
+
     if (at != 0) {
         try writer.print("\nIt panicked in {s}{s}{s} at {s}{s}:{d}{s}:\n\n", .{ style.bold(), inner.function, style.reset(), style.cyan(), shortPath(inner.path), inner.line, style.reset() });
         try writeLines(writer, style, inner_source, inner_source, inner);
         try writer.print("\nYour code called it at {s}{s}:{d}{s}:\n\n", .{ style.cyan(), file, frame.line, style.reset() });
     } else {
-        try writer.writeByte('\n');
+        try writer.print("\nIt panicked at {s}{s}:{d}{s}:\n\n", .{ style.cyan(), file, frame.line, style.reset() });
     }
     try writeCode(writer, allocator, io, crash, file, frame);
 
     try writeStack(writer, allocator, trace, crash, at);
 
     try writer.print("\n{s}{s}Hint:{s} {s}\n", .{ style.green(), style.bold(), style.reset(), hintFor(message, at == 0, is_injected_into_unreachable) });
+}
+
+// Writes what the call was made with, one line per parameter: `name = value`, or for a value
+// factory its name and where it is.
+fn writeParameters(writer: *std.Io.Writer, allocator: std.mem.Allocator, io: std.Io, crash: Crash) !void {
+    if (crash.parameters.len == 0) {
+        return;
+    }
+    const style = crash.style;
+    try writeCalledFunction(writer, allocator, io, crash);
+    var widest: usize = 0;
+    for (crash.parameters) |parameter| {
+        widest = @max(widest, parameter.name.len);
+    }
+    try writer.print("\n{s}Called with:{s}\n", .{ style.bold(), style.reset() });
+    for (crash.parameters) |parameter| {
+        try writer.print("    {s}{s}{s}", .{ style.bold(), parameter.name, style.reset() });
+        for (0..widest - parameter.name.len) |_| {
+            try writer.writeByte(' ');
+        }
+        const factory = parameter.factory orelse {
+            try writer.print(" = {s}\n", .{parameter.value});
+            continue;
+        };
+        try writer.print(" = {s}{s}{s}, a value factory at {s}{s}:{d}{s}\n", .{ style.bold(), factory.name, style.reset(), style.cyan(), factory.file, factory.line, style.reset() });
+    }
+}
+
+// Writes the declaration of the function Faultline called, from the project's own file, with a
+// caret under its name, so the names under "Called with" can be read against it. Writes nothing
+// when the file or the declaration cannot be found.
+fn writeCalledFunction(writer: *std.Io.Writer, allocator: std.mem.Allocator, io: std.Io, crash: Crash) !void {
+    if (crash.subject_file.len == 0) {
+        return;
+    }
+    const style = crash.style;
+    const path = try std.fs.path.join(allocator, &.{ crash.repository, crash.subject_file });
+    const source = std.Io.Dir.cwd().readFileAllocOptions(io, path, allocator, .unlimited, .of(u8), 0) catch return;
+    const declared = (try declarationOf(allocator, source, crash.subject)) orelse return;
+    try writer.print("\nFaultline called {s}{s}{s} at {s}{s}:{d}{s}:\n\n", .{ style.bold(), crash.subject, style.reset(), style.cyan(), crash.subject_file, declared.line, style.reset() });
+    try writeLines(writer, style, source, source, .{ .path = path, .line = declared.line, .column = declared.column, .function = crash.subject });
 }
 
 // The stack trace in the order the calls were made: the command the crash started from at the

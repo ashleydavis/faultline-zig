@@ -6,8 +6,8 @@ const std = @import("std");
 const locator = @import("locator.zig");
 
 // A locator that asks each namespace's own locator in turn, in the order the namespaces are given.
-// It has the same interface as `locator.Locator`: `init`, `reset`, `canMake`, `count`, `nameOf`,
-// `make` and `makeInto`.
+// It has the interface of `locator.Locator`: `init`, `reset`, `canMake`, `count`, `nameOf`, `make`
+// and `makeInto`, and says with `namespaceOf` which namespace a factory is in.
 pub fn Combined(comptime namespaces: []const type) type {
     return struct {
         const Self = @This();
@@ -56,6 +56,20 @@ pub fn Combined(comptime namespaces: []const type) type {
                 const here = locator.Locator(namespace).count(T);
                 if (index < before + here) {
                     return locator.Locator(namespace).nameOf(T, index - before);
+                }
+                before += here;
+            }
+            return null;
+        }
+
+        // Which namespace, counting from zero in the order they were given, holds the factory at
+        // `index` for `T`, or null for an index past the last one.
+        pub fn namespaceOf(comptime T: type, index: usize) ?usize {
+            var before: usize = 0;
+            inline for (namespaces, 0..) |namespace, part| {
+                const here = locator.Locator(namespace).count(T);
+                if (index < before + here) {
+                    return part;
                 }
                 before += here;
             }

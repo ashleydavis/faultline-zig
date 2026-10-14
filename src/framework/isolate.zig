@@ -229,7 +229,9 @@ fn leaveOnSignal(signal: linux.SIG) callconv(.c) void {
     linux.exit_group(@intCast(signal_exit_base + @intFromEnum(signal)));
 }
 
-fn writeAll(fd: i32, bytes: []const u8) void {
+// Writes all of `bytes` to `fd`, giving up at the first error. Used where nothing else can be,
+// such as in a panic handler.
+pub fn writeAll(fd: i32, bytes: []const u8) void {
     var done: usize = 0;
     while (done < bytes.len) {
         const wrote = linux.write(fd, bytes[done..].ptr, bytes.len - done);

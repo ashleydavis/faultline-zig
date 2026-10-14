@@ -12,6 +12,7 @@ const auto = @import("auto.zig");
 const call_specs = @import("call_specs.zig");
 const condition = @import("condition.zig");
 const injector_mod = @import("injector.zig");
+const isolate = @import("isolate.zig");
 const session_mod = @import("session.zig");
 const wire = @import("wire.zig");
 
@@ -42,6 +43,74 @@ const argument_arena_limit_bytes = 256 * 1024 * 1024;
 //
 // `Locator` finds value factories, `function` is the function and `expectations` is a tuple of the
 // expectation functions that run after every call of it, each a struct with a `name` and a `call`.
+// Writes each argument of a call to the error stream, one line each as `argument <position>:
+// <value>`, for the replay that shows where a crash happened to say what the call was made with.
+// A line is cut at a length a person reads at a glance, because a value can be a whole structure.
+pub fn writeArguments(arguments: anytype) void {
+    inline for (arguments, 0..) |argument, position| {
+        // Long enough for a string or a number in full and the start of anything larger.
+        var buffer: [200]u8 = undefined;
+        var line = std.Io.Writer.fixed(&buffer);
+        line.print("argument {d}: ", .{position}) catch {};
+        writeValue(&line, argument) catch {
+            line.end = buffer.len - "...".len;
+            line.writeAll("...") catch {};
+        };
+        isolate.writeAll(2, line.buffered());
+        isolate.writeAll(2, "\n");
+    }
+}
+
+// Writes one argument the way a person reads it: a string in quotes, the values Faultline itself
+// supplies by what they are, and anything else as Zig formats it.
+pub fn writeValue(writer: *std.Io.Writer, value: anytype) std.Io.Writer.Error!void {
+    const T = @TypeOf(value);
+    if (T == std.mem.Allocator) {
+        return writer.writeAll("the allocator Faultline supplies");
+    }
+    if (T == std.Io) {
+        return writer.writeAll("the simulated filesystem and network Faultline supplies");
+    }
+    if (T == *std.Io.Writer) {
+        return writer.writeAll("the writer Faultline supplies");
+    }
+    switch (@typeInfo(T)) {
+        .pointer => |pointer| {
+            if (pointer.size == .slice and pointer.child == u8) {
+                return writer.print("\"{f}\"", .{std.zig.fmtString(value)});
+            }
+        },
+        // Written field by field, so a string inside it is written as a string too.
+        .@"struct" => |info| {
+            if (!info.is_tuple) {
+                try writer.writeAll(".{");
+                inline for (info.fields, 0..) |field, index| {
+                    try writer.print("{s} .{s} = ", .{ if (index == 0) "" else ",", field.name });
+                    try writeValue(writer, @field(value, field.name));
+                }
+                return writer.writeAll(" }");
+            }
+        },
+        .optional => {
+            if (value) |present| {
+                return writeValue(writer, present);
+            }
+            return writer.writeAll("null");
+        },
+        else => {},
+    }
+    return writer.print("{any}", .{value});
+}
+
+// A value factory a call was made with: its name and which of the locator's namespaces holds it.
+pub const Factory = struct {
+    // The name the sim file declares it with.
+    name: []const u8,
+
+    // The namespace's position among those the locator searches, counting from zero.
+    namespace: usize,
+};
+
 pub fn Call(comptime Locator: type, comptime function: anytype, comptime expectations: anytype) type {
     const Function = @TypeOf(function);
     const Context = auto.Context(Locator);
@@ -53,16 +122,20 @@ pub fn Call(comptime Locator: type, comptime function: anytype, comptime expecta
         // The name of the type of the first parameter nothing can build, or an empty string.
         pub const unbuildable = if (auto.firstUnbuildableParameter(Function, Locator)) |T| @typeName(T) else "";
 
-        // The name of the value factory a factory choice at `index` picks for the parameter at
-        // `position`, or null when that parameter has no such factory.
-        pub fn factoryName(position: usize, index: usize) ?[]const u8 {
+        // The value factory a factory choice at `index` picks for the parameter at `position`: its
+        // name and which of the locator's namespaces holds it. Null when that parameter has no such
+        // factory.
+        pub fn factoryOf(position: usize, index: usize) ?Factory {
             inline for (@typeInfo(Function).@"fn".params, 0..) |param, at| {
                 if (position == at) {
                     const Parameter = param.type orelse return null;
                     if (comptime !Locator.canMake(Parameter)) {
                         return null;
                     }
-                    return Locator.nameOf(Parameter, index);
+                    return .{
+                        .name = Locator.nameOf(Parameter, index) orelse return null,
+                        .namespace = Locator.namespaceOf(Parameter, index) orelse return null,
+                    };
                 }
             }
             return null;
@@ -133,6 +206,9 @@ pub fn Call(comptime Locator: type, comptime function: anytype, comptime expecta
             // Building the arguments may have used the allocator or the io. Those calls are not
             // the function's, so the injector starts counting from here.
             session.injector.reset();
+            if (isolate.is_trace_wanted) {
+                writeArguments(arguments);
+            }
 
             const outcome: wire.Result = blk: {
                 const result = @call(.auto, function, arguments);
