@@ -178,6 +178,28 @@ test "writeExitFile replaces what an earlier run wrote" {
     try std.testing.expectEqualStrings("0", text);
 }
 
+test "readShardCalls keeps a shard's count when its progress file is missing or half written" {
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const length = try directory.dir.realPath(std.testing.io, &path_buffer);
+    const root = path_buffer[0..length];
+    const whole = try std.fmt.allocPrint(std.testing.allocator, "{s}/shard0", .{root});
+    defer std.testing.allocator.free(whole);
+    const half = try std.fmt.allocPrint(std.testing.allocator, "{s}/shard1", .{root});
+    defer std.testing.allocator.free(half);
+    const missing = try std.fmt.allocPrint(std.testing.allocator, "{s}/shard2", .{root});
+    defer std.testing.allocator.free(missing);
+    try directory.dir.writeFile(std.testing.io, .{ .sub_path = "shard0.progress", .data = "40\ta.zig\trun\n" });
+    try directory.dir.writeFile(std.testing.io, .{ .sub_path = "shard1.progress", .data = "9" });
+    const prefixes = [_][]const u8{ whole, half, missing };
+    var calls = [_]usize{ 30, 25, 7 };
+
+    driver.readShardCalls(std.testing.allocator, std.testing.io, &prefixes, &calls);
+
+    try std.testing.expectEqualSlices(usize, &.{ 40, 25, 7 }, &calls);
+}
+
 test "jobsFor takes the count asked for, or one per core, and never more than the shards or fewer than one" {
     try std.testing.expectEqual(@as(usize, 4), driver.jobsFor(4, 16, 10));
     try std.testing.expectEqual(@as(usize, 16), driver.jobsFor(null, 16, 20));

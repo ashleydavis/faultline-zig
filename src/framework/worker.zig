@@ -217,6 +217,16 @@ fn writeProgress(file: []const u8, function: []const u8) void {
     std.Io.Dir.cwd().writeFile(progress_io, .{ .sub_path = path, .data = text }) catch {};
 }
 
+// Writes the progress file once more with every call the worker finished, when it has one. The
+// file is otherwise written at most twice a second, so without this the calls of the last half
+// second would be missing from the count the driver carries into the next pass.
+pub fn finishProgress() void {
+    if (!progress_is_watched) {
+        return;
+    }
+    writeProgress("", "");
+}
+
 // Reads what `writeProgress` wrote, or null for text that is not a whole line of it, which is what
 // a reader sees while the file is being written.
 pub fn readProgress(text: []const u8) ?Progress {

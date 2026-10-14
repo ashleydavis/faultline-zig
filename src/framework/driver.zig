@@ -151,6 +151,7 @@ fn runWorker(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, a
         .sources_root = args.sources_root,
     }, items);
     defer results.deinit();
+    worker.finishProgress();
 
     var buffer: std.Io.Writer.Allocating = .init(allocator);
     try worker.writeResults(&buffer.writer, results);
@@ -248,6 +249,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     var failures: std.ArrayList(worker.Failure) = .empty;
 
     try std.Io.Dir.cwd().createDirPath(io, args.kcov_output);
+    var progress: RunProgress = .{ .started_at = started_at };
 
     // Rounds. kcov reports what ran only when the worker it watches exits, so the calls are made a
     // round at a time: each round makes the next calls of every function that still has a code path
@@ -291,7 +293,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         if (items.items.len == 0) {
             break;
         }
-        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, items.items, checklists.items, standings, &failures);
+        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, items.items, checklists.items, standings, &failures, &progress);
         for (selected.items) |index| {
             if (done[index]) {
                 continue;
@@ -326,7 +328,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         }
     }
     if (second.items.len != 0) {
-        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, second.items, checklists.items, standings, &failures);
+        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, second.items, checklists.items, standings, &failures, &progress);
     }
 
     const elapsed = started_at.durationTo(std.Io.Clock.Timestamp.now(io, .awake));
@@ -350,6 +352,7 @@ fn runPass(
     checklists: []coverage.Checklist,
     standings: []Standing,
     failures: *std.ArrayList(worker.Failure),
+    progress: *RunProgress,
 ) !void {
     const files = try allocator.alloc([]const u8, items.len);
     defer allocator.free(files);
@@ -368,6 +371,9 @@ fn runPass(
     const children = try allocator.alloc(?std.process.Child, split.len);
     defer allocator.free(children);
     @memset(children, null);
+    const shard_calls = try allocator.alloc(usize, split.len);
+    defer allocator.free(shard_calls);
+    @memset(shard_calls, 0);
     // Whatever goes wrong, no worker is left running.
     defer {
         for (children) |*slot| {
@@ -396,7 +402,8 @@ fn runPass(
             }
         }
         if (is_watched) {
-            printPassProgress(allocator, io, prefixes[0..next], children[0..next]);
+            readShardCalls(allocator, io, prefixes[0..next], shard_calls[0..next]);
+            printPassProgress(allocator, io, progress.*, shard_calls, prefixes[0..next], children[0..next]);
         }
         if (finished < split.len) {
             var a_moment: std.os.linux.timespec = .{ .sec = 0, .nsec = worker_check_every_ns };
@@ -404,6 +411,10 @@ fn runPass(
         }
     }
     if (is_watched) {
+        readShardCalls(allocator, io, prefixes, shard_calls);
+        for (shard_calls) |calls| {
+            progress.calls_before += calls;
+        }
         output_mod.print("", .{});
     }
 
@@ -491,10 +502,38 @@ fn startShard(
     });
 }
 
-// Prints one progress line for every worker of a pass: the calls all of them have finished, and the
-// file and function of the last running worker that has said where it is.
-fn printPassProgress(allocator: std.mem.Allocator, io: std.Io, prefixes: []const []const u8, children: []const ?std.process.Child) void {
-    var calls: usize = 0;
+// What the progress line carries from one pass to the next, so its count and its time are of the
+// whole run and do not start again with every pass.
+pub const RunProgress = struct {
+    // How many calls the passes before this one finished.
+    calls_before: usize = 0,
+
+    // When the run started.
+    started_at: std.Io.Clock.Timestamp,
+};
+
+// Sets `calls` to how many calls each shard's worker has finished, as its progress file says. A
+// worker rewrites its file while the driver may be reading it, so a file that is missing or half
+// written leaves that shard's count as it was, and the line never counts backwards.
+pub fn readShardCalls(allocator: std.mem.Allocator, io: std.Io, prefixes: []const []const u8, calls: []usize) void {
+    var buffer: [2048]u8 = undefined;
+    for (prefixes, calls) |prefix, *count| {
+        const path = std.fmt.bufPrint(&buffer, "{s}.progress", .{prefix}) catch continue;
+        const text = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024)) catch continue;
+        defer allocator.free(text);
+        const read = worker.readProgress(text) orelse continue;
+        count.* = @max(count.*, read.calls);
+    }
+}
+
+// Prints one progress line for every worker of a pass: the calls the run has finished, which are
+// the earlier passes' and `shard_calls`, how long it has been going, and the file and function of
+// the last running worker that has said where it is.
+fn printPassProgress(allocator: std.mem.Allocator, io: std.Io, progress: RunProgress, shard_calls: []const usize, prefixes: []const []const u8, children: []const ?std.process.Child) void {
+    var calls: usize = progress.calls_before;
+    for (shard_calls) |count| {
+        calls += count;
+    }
     var file: []const u8 = "";
     var function: []const u8 = "";
     var buffer: [2048]u8 = undefined;
@@ -503,20 +542,22 @@ fn printPassProgress(allocator: std.mem.Allocator, io: std.Io, prefixes: []const
         const path = std.fmt.bufPrint(&buffer, "{s}.progress", .{prefix}) catch continue;
         const text = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024)) catch continue;
         defer allocator.free(text);
-        const progress = worker.readProgress(text) orelse continue;
-        calls += progress.calls;
-        if (child != null and progress.file.len != 0) {
-            const both = std.fmt.bufPrint(&latest, "{s}\t{s}", .{ progress.file, progress.function }) catch continue;
-            file = both[0..progress.file.len];
-            function = both[progress.file.len + 1 ..];
+        const read = worker.readProgress(text) orelse continue;
+        if (child != null and read.file.len != 0) {
+            const both = std.fmt.bufPrint(&latest, "{s}\t{s}", .{ read.file, read.function }) catch continue;
+            file = both[0..read.file.len];
+            function = both[read.file.len + 1 ..];
         }
     }
     if (calls == 0) {
         return;
     }
-    output_mod.printProgress("  Exercised {d} call{s}, now in {s} {s}.", .{
+    const elapsed = progress.started_at.durationTo(std.Io.Clock.Timestamp.now(io, .awake));
+    var elapsed_buffer: [32]u8 = undefined;
+    output_mod.printProgress("  Exercised {d} call{s} in {s}, now in {s} {s}.", .{
         calls,
         if (calls == 1) "" else "s",
+        worker.elapsedText(&elapsed_buffer, @intCast(elapsed.raw.nanoseconds)),
         file,
         function,
     });

@@ -353,6 +353,30 @@ test "a second call inside half a second writes no second line" {
     worker.resetProgress();
 }
 
+test "finishProgress writes every finished call to the progress file, the last half second's too" {
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const length = try directory.dir.realPath(std.testing.io, &path_buffer);
+    const path = try std.fmt.allocPrint(std.testing.allocator, "{s}/shard.progress", .{path_buffer[0..length]});
+    defer std.testing.allocator.free(path);
+    worker.progress_is_watched = true;
+    defer worker.progress_is_watched = false;
+    worker.progress_file = path;
+    defer worker.progress_file = null;
+    worker.progress_io = std.testing.io;
+    worker.resetProgress();
+    defer worker.resetProgress();
+
+    worker.reportProgress("src/greeting.zig", "greet");
+    worker.reportProgress("src/greeting.zig", "greet");
+    worker.finishProgress();
+
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(1024));
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqual(@as(usize, 2), worker.readProgress(text).?.calls);
+}
+
 test "a progress file's line reads back and a half written one does not" {
     const progress = worker.readProgress("12\tsrc/a.zig\trun\n").?;
 

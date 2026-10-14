@@ -417,11 +417,13 @@ fi
 # Every smoke test above is run with its output sent to a file, where the line that says how far a
 # run has got is left out. This one runs a smoke test on a pseudo-terminal, which is the one place
 # that line is written, and checks that it appears and is taken off the screen again before the
-# report starts.
+# report starts, and that its count of calls never goes down, from one pass to the next or while a
+# worker rewrites its progress file.
 if [ -z "$ONLY" ] && [ -z "$SHARD" ] && command -v script >/dev/null 2>&1; then
     PTY_OUTPUT="$RESULT_DIR/pty-progress.txt"
     (cd "$REPO_DIR/examples/working/08-allocator-failure" && NO_COLOR=1 script -qec "$ZIG build flt" "$PTY_OUTPUT" >/dev/null 2>&1)
-    if grep -q "Exercised [0-9]* call" "$PTY_OUTPUT" && grep -q $'\x1b\[2K' "$PTY_OUTPUT"; then
+    COUNTS_GO_DOWN=$(tr '\r' '\n' < "$PTY_OUTPUT" | grep -ao "Exercised [0-9]* call" | awk '$2 < last { down = 1 } { last = $2 } END { print down + 0 }')
+    if grep -q "Exercised [0-9]* call" "$PTY_OUTPUT" && grep -q $'\x1b\[2K' "$PTY_OUTPUT" && [ "$COUNTS_GO_DOWN" = "0" ]; then
         printf '  %spass%s  progress line on a terminal\n' "$GREEN" "$RESET"
     else
         printf '  %sFAIL%s  progress line on a terminal\n' "$RED" "$RESET"
