@@ -25,6 +25,10 @@ pub const Style = struct {
         return if (self.enabled) "\x1b[33m" else "";
     }
 
+    pub fn cyan(self: Style) []const u8 {
+        return if (self.enabled) "\x1b[36m" else "";
+    }
+
     pub fn bold(self: Style) []const u8 {
         return if (self.enabled) "\x1b[1m" else "";
     }

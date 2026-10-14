@@ -69,6 +69,10 @@ pub const Args = struct {
 
     // Whether to run without the results cache: every file is run and no result is kept.
     no_cache: bool = false,
+
+    // Whether a replay prints everything a crashed call wrote, its stack trace included, and
+    // nothing else. The driver asks for it to show where a reported crash happened.
+    trace: bool = false,
 };
 
 // What can be wrong with a command line.
@@ -90,6 +94,8 @@ pub fn parse(arguments: []const []const u8) ParseError!Args {
             parsed.no_color = true;
         } else if (std.mem.eql(u8, option, "--no-cache")) {
             parsed.no_cache = true;
+        } else if (std.mem.eql(u8, option, "--trace")) {
+            parsed.trace = true;
         } else if (std.mem.eql(u8, option, "--results-cache")) {
             parsed.results_cache = try valueOf(arguments, &index);
         } else if (std.mem.eql(u8, option, "--cache-salt")) {

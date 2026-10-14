@@ -404,11 +404,12 @@ TOOK="$(elapsed $(( $(date +%s) - STARTED_AT )))"
 echo ""
 echo "Ran ${#EXAMPLES[@]} smoke test(s), $PASSED passed, in $TOOK."
 
-# A smoke test that fails says so once, in Faultline's own words. Zig's own account of a failed run
-# step, which repeats the whole command line of the program, must not follow the report.
+# A smoke test that fails says so once, in Faultline's own words. Zig's own account of a failed
+# build, its step tree, its build summary and the build runner's whole command line, must not
+# follow the report.
 FAILING_LOG="$RESULT_DIR/non-working-28-never-exercised.output.raw"
 if [ -z "$ONLY" ] && [ -z "$SHARD" ] && [ -f "$FAILING_LOG" ]; then
-    if grep -q "failed command:" "$FAILING_LOG" || ! grep -q "Faultline exited with code 1" "$FAILING_LOG"; then
+    if grep -q "failed command:\|Build Summary:\|the following build command failed\|faultline failure" "$FAILING_LOG" || ! grep -q "Coverage:" "$FAILING_LOG"; then
         printf '  %sFAIL%s  one account of a failed run\n' "$RED" "$RESET"
         FAILED+=("non-working/28-never-exercised")
     else

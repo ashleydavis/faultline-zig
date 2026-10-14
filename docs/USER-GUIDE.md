@@ -347,4 +347,6 @@ The call to parseHeader failed with ParsedWrong.
 Reproduce it with: zig build flt -Dreplay="<token>"
 ```
 
+For a crash it shows where the crash happened, in the way Elm and Rust show an error: the file and line, the values the call was made with, the failure it injected, your code with a mark under the place (and the standard library's line too when the panic is there), the stack trace from the `zig build flt` command down to the panic and a hint for that kind of crash. `docs/OUTPUT.md` has an example under "A crash". Start from the hint, fix the code so it handles that input or that failure, and run the replay command again to check the crash is gone.
+
 The token holds the plan of injected failures and the values chosen. Run the command and Faultline drives the same calls in the same order and gives the same answer, with no other flag, environment or file.

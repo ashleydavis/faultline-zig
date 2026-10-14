@@ -12,7 +12,23 @@ Fault testing
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
   Full detail is in <cache>/faultline-report.txt.
 
-The call to firstWord crashed: panic: attempt to unwrap error: OutOfMemory
+-- CRASH ------------------------------------------------------------------ words.zig:9:51
+
+firstWord in words.zig crashed: panic: attempt to unwrap error: OutOfMemory
+It was called with the 1st boundary value, the 2nd boundary value.
+Faultline made the 1st allocator call fail with "allocation fails", in allocBytesWithAlignment at std/mem/Allocator.zig:300.
+
+7 | pub fn firstWord(allocator: std.mem.Allocator, text: []const u8) []u8 {
+8 |     const end = std.mem.indexOfScalar(u8, text, ' ') orelse text.len;
+9 |     return allocator.dupe(u8, text[0..end]) catch unreachable;
+                                                      ^
+
+Stack trace, from the command to the panic:
+    zig build flt
+    firstWord  words.zig:9:51  panicked here
+
+Hint: This line treats an error as one that cannot happen, with `catch unreachable` or an `unreachable` arm, but it happened. Return it with `try`, or catch it and handle it.
+
 Reproduce it with: zig build flt -Dreplay="words.zig:firstWord;seed=<seed>;values=b0,b1;fail=allocator#0/allocation_fails"
 
   Coverage: 1 of 1 code paths, 100%.

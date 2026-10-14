@@ -53,6 +53,21 @@ pub fn Call(comptime Locator: type, comptime function: anytype, comptime expecta
         // The name of the type of the first parameter nothing can build, or an empty string.
         pub const unbuildable = if (auto.firstUnbuildableParameter(Function, Locator)) |T| @typeName(T) else "";
 
+        // The name of the value factory a factory choice at `index` picks for the parameter at
+        // `position`, or null when that parameter has no such factory.
+        pub fn factoryName(position: usize, index: usize) ?[]const u8 {
+            inline for (@typeInfo(Function).@"fn".params, 0..) |param, at| {
+                if (position == at) {
+                    const Parameter = param.type orelse return null;
+                    if (comptime !Locator.canMake(Parameter)) {
+                        return null;
+                    }
+                    return Locator.nameOf(Parameter, index);
+                }
+            }
+            return null;
+        }
+
         // The finite list of specifications for the function. `arena` holds the list. Run in the
         // process that drives the calls, so values are never built here, only counted.
         pub fn listSpecs(

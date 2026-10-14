@@ -8,6 +8,7 @@ test "with colour off every helper is empty, so the same prints produce plain te
     try std.testing.expectEqualStrings("", style.green());
     try std.testing.expectEqualStrings("", style.red());
     try std.testing.expectEqualStrings("", style.yellow());
+    try std.testing.expectEqualStrings("", style.cyan());
     try std.testing.expectEqualStrings("", style.bold());
     try std.testing.expectEqualStrings("", style.dim());
     try std.testing.expectEqualStrings("", style.reset());
@@ -23,7 +24,7 @@ test "with colour off the marks are words, so a captured run reads without a ter
 
 test "with colour on every helper is an escape sequence" {
     const style = Style.init(true);
-    for ([_][]const u8{ style.green(), style.red(), style.yellow(), style.bold(), style.dim(), style.reset() }) |code| {
+    for ([_][]const u8{ style.green(), style.red(), style.yellow(), style.cyan(), style.bold(), style.dim(), style.reset() }) |code| {
         try std.testing.expect(code.len != 0);
         try std.testing.expectEqual(@as(u8, 0x1b), code[0]);
     }

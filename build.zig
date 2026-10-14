@@ -379,9 +379,10 @@ fn isPathBefore(_: void, left: []const u8, right: []const u8) bool {
     return std.mem.lessThan(u8, left, right);
 }
 
-// Fails the build when the program's exit code, written to a file, is not zero. Its one sentence
-// points back at Faultline's report, which is what says what failed. Zig needs a failed step to
-// carry a message and prints nothing else about it.
+// Fails the build when the program's exit code, written to a file, is not zero. Faultline's report
+// above already says what failed, so the build runner is ended at once with the code it uses for a
+// failure it should not describe again: a failed step would make Zig print the step tree, a build
+// summary and the build runner's whole command line after the report.
 const ExitStep = struct {
     step: std.Build.Step,
 
@@ -395,7 +396,9 @@ const ExitStep = struct {
         };
         const code = std.mem.trim(u8, text, " \n");
         if (!std.mem.eql(u8, code, "0")) {
-            return step.fail("Faultline exited with code {s}. What it found is above.", .{code});
+            // Two is what the build runner exits with when a step failed and the failure is not
+            // to be described again (`build_runner.zig`), and Zig then prints nothing more.
+            std.process.exit(2);
         }
     }
 };

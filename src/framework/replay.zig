@@ -38,6 +38,10 @@ pub const Options = struct {
 
     // How long the call may take.
     limits: isolate.Limits = isolate.default_limits,
+
+    // Whether a failure keeps everything the call wrote on its error stream, and not only the
+    // first line.
+    keeps_whole_complaint: bool = false,
 };
 
 // Replays `token_text`. `Subject` is a `project.Project(...)`. Strings in a failure live in `room`.
@@ -73,7 +77,7 @@ pub fn run(
             .real_io = real_io,
         }, options.limits);
         defer attempt.deinit(allocator);
-        return try verdictOf(allocator, room, false, index, token_text, attempt);
+        return try verdictOf(allocator, room, false, index, token_text, attempt, options.keeps_whole_complaint);
     }
 
     for (Subject.scenario_entries, 0..) |entry, index| {
@@ -82,7 +86,7 @@ pub fn run(
         }
         var attempt = try entry.attempt(allocator, real_io, plan.seed, options.limits);
         defer attempt.deinit(allocator);
-        return try verdictOf(allocator, room, true, index, token_text, attempt);
+        return try verdictOf(allocator, room, true, index, token_text, attempt, options.keeps_whole_complaint);
     }
     return .not_found;
 }
@@ -103,11 +107,16 @@ fn verdictOf(
     index: usize,
     token_text: []const u8,
     attempt: isolate.Attempt,
+    keeps_whole_complaint: bool,
 ) !Verdict {
     var report = try wire.read(allocator, attempt.output);
     defer report.deinit();
     const token = try room.dupe(u8, token_text);
-    if (try worker.failureOf(room, is_scenario, index, token, attempt, report)) |failure| {
+    if (try worker.failureOf(room, is_scenario, index, token, attempt, report)) |found| {
+        var failure = found;
+        if (keeps_whole_complaint) {
+            failure.complaint = try room.dupe(u8, attempt.complaint);
+        }
         return .{ .failed = failure };
     }
     return .passed;

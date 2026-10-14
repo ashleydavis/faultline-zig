@@ -10,10 +10,12 @@ const std = @import("std");
 const args_mod = @import("args.zig");
 const checklist_mod = @import("checklist.zig");
 const coverage = @import("coverage.zig");
+const crash_view = @import("crash_view.zig");
 const covered_lines = @import("covered_lines.zig");
 const isolate = @import("isolate.zig");
 const kcov_run = @import("kcov_run.zig");
 const output_mod = @import("output.zig");
+const plan_mod = @import("plan.zig");
 const project_mod = @import("project.zig");
 const replay_mod = @import("replay.zig");
 const report_mod = @import("report.zig");
@@ -85,7 +87,7 @@ pub fn writeExitFile(io: std.Io, path: []const u8, code: u8) !void {
 
 fn runParsed(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init: std.process.Init.Minimal, args: args_mod.Args) !u8 {
     if (args.replay) |token| {
-        return replayToken(Subject, allocator, io, args, token);
+        return replayToken(Subject, allocator, io, init, args, token);
     }
     if (args.worker) {
         try runWorker(Subject, allocator, io, args);
@@ -98,14 +100,41 @@ fn runParsed(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, i
 // Replay
 // ---------------------------------------------------------------------------------------------
 
-fn replayToken(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, args: args_mod.Args, token: []const u8) !u8 {
-    const verdict = try replay_mod.run(Subject, allocator, allocator, io, .{ .sources_root = args.sources_root }, token);
+fn replayToken(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init: std.process.Init.Minimal, args: args_mod.Args, token: []const u8) !u8 {
+    isolate.is_trace_wanted = args.trace;
+    const verdict = try replay_mod.run(Subject, allocator, allocator, io, .{
+        .sources_root = args.sources_root,
+        .keeps_whole_complaint = args.trace,
+    }, token);
+    if (args.trace) {
+        // Only what the call wrote, for the driver that asked to read where it crashed.
+        if (verdict == .failed) {
+            output_mod.print("{s}", .{verdict.failed.complaint});
+        }
+        return if (verdict == .failed) exit_failed else exit_ok;
+    }
     switch (verdict) {
         .passed => {
             output_mod.print("The replay of \"{s}\" passed.\n", .{token});
             return exit_ok;
         },
         .failed => |failure| {
+            if (failure.kind == .crash) {
+                // The trace names files by absolute path, so the copy's directory is made absolute
+                // to tell the project's frames from the rest.
+                var absolute = args;
+                absolute.sources_root = try std.Io.Dir.cwd().realPathFileAlloc(io, args.sources_root, allocator);
+                var environ_map = try init.environ.createMap(allocator);
+                defer environ_map.deinit();
+                const style = style_mod.Style.init(!args.no_color and environ_map.get("NO_COLOR") == null);
+                const command = try std.fmt.allocPrint(allocator, "zig build flt -Dreplay=\"{s}\"", .{token});
+                if (try crashViewOf(Subject, allocator, io, absolute, style, failure, command)) |view| {
+                    // The command was typed a moment ago and stands at the root of the trace, so
+                    // it is not repeated.
+                    output_mod.print("The replay failed.\n\n{s}", .{view});
+                    return exit_failed;
+                }
+            }
             output_mod.print("The replay of \"{s}\" failed.\n", .{token});
             report_mod.printFailure(failure, subjectName(Subject, failure));
             return exit_failed;
@@ -686,6 +715,78 @@ pub fn hasUntickedPath(checklists: []const coverage.Checklist, file: []const u8,
     return false;
 }
 
+// The view of a crash (`crash_view.zig`): where it happened, the code, the callers and a hint. It
+// replays the call once more, in a program of its own that writes the stack trace, which the calls
+// of a run never do because it is slow. Null when the replay did not crash or its trace has no
+// frame to show.
+fn crashViewOf(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, args: args_mod.Args, style: style_mod.Style, failure: worker.Failure, command: []const u8) !?[]const u8 {
+    const exe_path = try std.process.executablePathAlloc(io, allocator);
+    const replayed = std.process.run(allocator, io, .{
+        .argv = &.{ exe_path, "--replay", failure.token, "--trace", "--sources-root", args.sources_root, "--repository", args.repository },
+        // Far more than any trace a crash writes, which is a few lines for each frame.
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    }) catch return null;
+    // Faultline writes what it prints on its error stream, and the trace goes with it.
+    const trace = try crash_view.parse(allocator, try std.mem.concat(allocator, u8, &.{ replayed.stdout, replayed.stderr }));
+    if (trace.stack.len == 0) {
+        return null;
+    }
+    var text: std.Io.Writer.Allocating = .init(allocator);
+    try crash_view.write(&text.writer, allocator, io, trace, .{
+        .subject = subjectName(Subject, failure),
+        .subject_file = subjectFile(Subject, failure),
+        .token = failure.token,
+        .inputs = try inputsOf(Subject, allocator, failure),
+        .command = command,
+        .sources_root = args.sources_root,
+        .repository = args.repository,
+        .style = style,
+    });
+    return text.written();
+}
+
+// The file of what a failure is about, relative to the project root.
+fn subjectFile(comptime Subject: type, failure: worker.Failure) []const u8 {
+    if (failure.is_scenario) {
+        if (comptime Subject.scenario_entries.len == 0) {
+            return "";
+        }
+        return Subject.scenario_entries[failure.index].file;
+    }
+    if (comptime Subject.function_entries.len == 0) {
+        return "";
+    }
+    return Subject.function_entries[failure.index].file;
+}
+
+// The values a failed call was made with, in words, one per parameter: the name of the value
+// factory for a factory choice and `the 2nd boundary value` and the like for the rest. Empty for a
+// scenario or a token that cannot be read.
+fn inputsOf(comptime Subject: type, allocator: std.mem.Allocator, failure: worker.Failure) ![]const u8 {
+    if (failure.is_scenario or comptime Subject.function_entries.len == 0) {
+        return "";
+    }
+    var plan = plan_mod.parse(allocator, failure.token) catch return "";
+    defer plan.deinit();
+    const entry = Subject.function_entries[failure.index];
+    var text: std.Io.Writer.Allocating = .init(allocator);
+    for (plan.choices, 0..) |choice, position| {
+        if (position != 0) {
+            try text.writer.writeAll(", ");
+        }
+        if (choice.source == .factory) {
+            if (entry.factory_name(position, choice.index)) |name| {
+                try text.writer.writeAll(name);
+                continue;
+            }
+        }
+        const number = @as(usize, choice.index) + 1;
+        try text.writer.print("the {d}{s} {t} value", .{ number, crash_view.ordinalSuffix(number), choice.source });
+    }
+    return text.written();
+}
+
 // Says how many files' results came from the cache. Silent when none did.
 fn printLoaded(cache: run_cache.State) void {
     const counts = cache.loadedCounts();
@@ -803,7 +904,14 @@ fn report(
     if (failures.len != 0) {
         output_mod.print("\n", .{});
         const shown = @min(failures.len, failure_limit);
-        for (failures[0..shown]) |failure| {
+        for (failures[0..shown], 0..) |failure, position| {
+            if (failure.kind == .crash) {
+                if (try crashViewOf(Subject, allocator, io, args, style, failure, "zig build flt")) |view| {
+                    output_mod.print("{s}{s}\n", .{ if (position == 0) "" else "\n", view });
+                    report_mod.printReplay(failure.token);
+                    continue;
+                }
+            }
             report_mod.printFailure(failure, subjectName(Subject, failure));
         }
         if (failures.len > shown) {

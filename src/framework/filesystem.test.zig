@@ -2263,6 +2263,10 @@ fn deleteAFile(world: *World) anyerror!void {
     try Dir.cwd().deleteFile(world.io, "f.txt");
 }
 
+fn deleteAFileInADirectory(world: *World) anyerror!void {
+    try Dir.cwd().deleteFile(world.io, "dir/a.txt");
+}
+
 fn deleteADirectory(world: *World) anyerror!void {
     try Dir.cwd().deleteDir(world.io, "empty");
 }
@@ -2273,10 +2277,25 @@ test "delete rows: removing a file fails as the table says" {
         .{ .id = "access_denied", .expected = error.AccessDenied, .run = deleteAFile },
         .{ .id = "file_in_use", .expected = error.FileBusy, .run = deleteAFile },
         .{ .id = "is_a_directory", .expected = error.IsDir, .run = deleteAFile },
-        .{ .id = "not_a_directory", .expected = error.NotDir, .run = deleteAFile },
+        .{ .id = "not_a_directory", .expected = error.NotDir, .run = deleteAFileInADirectory },
         .{ .id = "symlink_loop", .expected = error.SymLinkLoop, .run = deleteAFile },
         .{ .id = "read_only_filesystem", .expected = error.ReadOnlyFileSystem, .run = deleteAFile },
     });
+}
+
+test "delete rows: a file named with no / is never offered not a directory and one under a directory is" {
+    var world: World = undefined;
+    world.create(&.{});
+    defer world.destroy();
+    try seed();
+
+    try deleteAFile(&world);
+    try testing.expect(!wasOffered(&world, .delete, "not_a_directory"));
+    try testing.expect(wasOffered(&world, .delete, "file_not_found"));
+
+    world.injector.reset();
+    try deleteAFileInADirectory(&world);
+    try testing.expect(wasOffered(&world, .delete, "not_a_directory"));
 }
 
 test "delete rows: removing a directory fails as the table says" {

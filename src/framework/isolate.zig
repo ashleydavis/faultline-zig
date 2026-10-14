@@ -134,15 +134,36 @@ var in_child = false;
 // The status is the one the signal handler for an abort leaves with, so the parent reads the end
 // of the child as the same crash it read before. The parent panics the ordinary way: a crash
 // there is a defect in Faultline and the message and trace are the whole diagnosis.
+//
+// A child started while `is_trace_wanted` is set writes, after the message, where the error came
+// from and the stack trace, so the one call of a reported crash can be replayed to show where it
+// happened. Only that replay pays for reading the debug information.
 pub fn panicInChild(message: []const u8, first_trace_address: ?usize) noreturn {
     if (in_child) {
         writeAll(2, "panic: ");
         writeAll(2, message);
         writeAll(2, "\n");
+        if (is_trace_wanted) {
+            if (@errorReturnTrace()) |trace| {
+                if (trace.index > 0) {
+                    writeAll(2, "error return context:\n");
+                    std.debug.dumpErrorReturnTrace(trace);
+                }
+            }
+            writeAll(2, "stack trace:\n");
+            std.debug.dumpCurrentStackTrace(.{
+                .first_address = first_trace_address orelse @returnAddress(),
+                .allow_unsafe_unwind = true,
+            });
+        }
         linux.exit_group(@intCast(signal_exit_base + @intFromEnum(linux.SIG.ABRT)));
     }
     std.debug.defaultPanic(message, first_trace_address);
 }
+
+// Whether a child that panics writes where the error came from and the stack trace after the
+// message. Set only by the replay that shows where a reported crash happened.
+pub var is_trace_wanted = false;
 
 // What the child does between being forked and ending. Never returns.
 fn runInChild(runner: anytype, limits: Limits, output_pipe: [2]i32, complaint_pipe: [2]i32) noreturn {

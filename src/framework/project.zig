@@ -74,6 +74,11 @@ pub const FunctionEntry = struct {
     // Makes one call in this process and writes the report to `out`. Only for a child that makes
     // calls for its parent: a call that crashes takes the process with it.
     run_here: *const fn (request: call_mod.Request, out: *std.Io.Writer) void,
+
+    // The name of the value factory a factory choice at `index` picks for the parameter at
+    // `position`, or null when that parameter has none, for saying which values a call was made
+    // with.
+    factory_name: *const fn (position: usize, index: usize) ?[]const u8 = Unreachable.factoryName,
 };
 
 // A sim file and the source file it belongs to.
@@ -108,6 +113,10 @@ const Unreachable = struct {
     }
 
     fn runHere(_: call_mod.Request, _: *std.Io.Writer) void {}
+
+    fn factoryName(_: usize, _: usize) ?[]const u8 {
+        return null;
+    }
 };
 
 // The name of a sim file whose value factories are used for every file, not only the one beside it.
@@ -240,6 +249,7 @@ pub fn Project(comptime files: anytype) type {
                 .list_specs = Runner.listSpecs,
                 .attempt = Wrapper.attempt,
                 .run_here = Wrapper.runHere,
+                .factory_name = Runner.factoryName,
             };
         }
 

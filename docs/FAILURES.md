@@ -126,6 +126,8 @@ These are the failures Faultline injects, grouped by what the function is using:
 | Read-only filesystem | `error.ReadOnlyFileSystem` |
 | Error part way through deleting a tree | an error from deleting one entry, after earlier entries were deleted |
 
+A file named with no `/` in it is never made to fail with "not a directory": it is an entry of the open directory itself, so no part of its path can be something other than a directory, and the standard library's `deleteTree` treats that error as one that cannot happen.
+
 ## Create a directory
 
 | Failure | What the call returns |

@@ -27,7 +27,12 @@ pub fn printFailure(failure: worker.Failure, subject: []const u8) void {
             }
         },
     }
-    output_mod.print("Reproduce it with: zig build flt -Dreplay=\"{s}\"\n", .{failure.token});
+    printReplay(failure.token);
+}
+
+// Prints the command that repeats the call a replay token names.
+pub fn printReplay(token: []const u8) void {
+    output_mod.print("Reproduce it with: zig build flt -Dreplay=\"{s}\"\n", .{token});
 }
 
 test {

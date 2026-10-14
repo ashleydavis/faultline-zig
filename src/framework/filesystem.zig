@@ -285,6 +285,12 @@ const stream_state_ids = [_][]const u8{ "read_or_write_at_a_position_on_a_stream
 // The ids of the rows for a call that removes a name, before an earlier removal has happened.
 const delete_ids = [_][]const u8{ "file_not_found", "access_denied", "file_in_use", "is_a_directory", "not_a_directory", "symlink_loop", "read_only_filesystem" };
 
+// The ids of the rows for a call that removes a file named with no `/` in it: an entry of the open
+// directory itself. No part of such a path can be something other than a directory, so the call
+// cannot fail with `NotDir` on a real system, and the standard library's `deleteTree` treats that
+// error as one that cannot happen.
+const delete_bare_name_ids = [_][]const u8{ "file_not_found", "access_denied", "file_in_use", "is_a_directory", "symlink_loop", "read_only_filesystem" };
+
 // The ids of the rows for a call that removes a directory.
 const delete_directory_ids = [_][]const u8{ "file_not_found", "access_denied", "file_in_use", "not_a_directory", "directory_not_empty", "symlink_loop", "read_only_filesystem" };
 
@@ -745,10 +751,10 @@ fn deleteFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteF
     const start = startOf(dir) orelse {
         return error.FileNotFound;
     };
-    const picked = if (removed_count > 0)
-        faults.ask(.delete, Dir.DeleteFileError, &(delete_ids ++ [_][]const u8{"error_part_way_through_deleting_a_tree"}))
+    const picked = if (std.mem.indexOfScalar(u8, sub_path, '/') == null)
+        askDeleteFile(&delete_bare_name_ids)
     else
-        faults.ask(.delete, Dir.DeleteFileError, &delete_ids);
+        askDeleteFile(&delete_ids);
     if (picked) |kind| {
         if (faults.isKind(.delete, "error_part_way_through_deleting_a_tree", kind)) {
             return error.FileSystem;
@@ -775,6 +781,15 @@ fn deleteFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteF
     _ = tree.detach(found.dir, found.name);
     tree.release(node);
     removed_count += 1;
+}
+
+// Which failure, if any, a call that removes a file has, from the rows `ids` and, once something
+// has been removed, an error part way through deleting a tree.
+fn askDeleteFile(comptime ids: []const []const u8) ?u8 {
+    if (removed_count > 0) {
+        return faults.ask(.delete, Dir.DeleteFileError, ids ++ &[_][]const u8{"error_part_way_through_deleting_a_tree"});
+    }
+    return faults.ask(.delete, Dir.DeleteFileError, ids);
 }
 
 // Removes an empty directory.

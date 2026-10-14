@@ -211,6 +211,19 @@ pub fn Locator(comptime Namespace: type) type {
             return (comptime matchesFor(T)).len > 0;
         }
 
+        // The name of the factory at `index` for `T`, as the sim file declares it, or null for an
+        // index past the last one. Every place in a struct factory's series has the method's name.
+        pub fn nameOf(comptime T: type, index: usize) ?[]const u8 {
+            var seen: usize = 0;
+            inline for (comptime matchesFor(T)) |match| {
+                if (index >= seen and index < seen + comptime repeatsOf(match)) {
+                    return match.name;
+                }
+                seen += comptime repeatsOf(match);
+            }
+            return null;
+        }
+
         // How many factories for `T` the namespace holds.
         pub fn count(comptime T: type) usize {
             var total: usize = 0;
