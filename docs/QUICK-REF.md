@@ -55,7 +55,7 @@ Faultline keeps each file's result in your build's cache and does not execute ag
   Coverage: 2 of 3 code paths, 66%.
 ```
 
-A function is done when its line reads `ok`, which means every one of its code paths was exercised (the `2/3` in the example is 2 exercised out of 3). Each checklist line carries a file, a line and one thing to do. The report file named on the `Full detail` line lists every code path, exercised or not.
+A function is done when its line reads `ok`, which means every one of its code paths was exercised (the `2/3` in the example is 2 exercised out of 3). Each checklist line carries a file, a line and one thing to do. The report file named on the `Full detail` line lists every code path, exercised or not, every failure and every thing to do, including those the terminal leaves out.
 
 ## 6. Write value factories for your own types that Faultline cannot instantiate
 
@@ -105,6 +105,7 @@ Value factories, scenarios and expectation functions go in a sim file beside the
 
 ## How to write a value factory
 
+- For a parameter that takes an error set, such as `anyerror`, a value factory returns the error itself (`pub fn missingFile() anyerror { return error.FileNotFound; }`). Faultline calls the function with an error of its own first and then with each factory's error.
 - Re-exports are banned in `.sim.zig` files, including another sim file's value factory (`pub const name = other_sim.name;`).
 - A value factory that returns a pointer, or a value holding pointers, creates what they point at with the allocator Faultline passes to it. Do not keep any of it in file-level variables or constants. Memory from that allocator lasts as long as the call.
 - Put the value and everything it points at in one struct and create that with one `allocator.create`, rather than one `create` per piece.

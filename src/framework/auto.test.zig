@@ -928,3 +928,34 @@ test "firstUnbuildableParameter names the type to write a value factory for" {
     try std.testing.expect(comptime auto.firstUnbuildableParameter(Function, NoFactories).? == SourceSim.Reader);
     try std.testing.expect(comptime auto.firstUnbuildableParameter(Function, WithReader).? == *anyopaque);
 }
+
+// A sim file whose value factories return errors, for a function that words each error.
+const ErrorSim = struct {
+    pub fn missingFile() anyerror {
+        return error.FileNotFound;
+    }
+
+    pub fn deniedAccess() anyerror {
+        return error.AccessDenied;
+    }
+};
+
+const WithErrors = locator.Locator(ErrorSim);
+
+test "anyerror is offered the supplied error first and then every value factory that returns one" {
+    var h: Harness(WithErrors) = undefined;
+    h.start(1);
+    defer h.finish();
+    const ctx = h.context();
+    const choices = try auto.listChoices(anyerror, WithErrors, ctx);
+    try std.testing.expectEqual(auto.Source.boundary, choices[0].source);
+    try std.testing.expectEqual(@as(usize, 3), choices.len);
+
+    var built: anyerror = undefined;
+    try auto.buildValueInto(anyerror, WithErrors, ctx, choices[0], &built);
+    try std.testing.expectEqual(@as(anyerror, auto.supplied_error), built);
+    try auto.buildValueInto(anyerror, WithErrors, ctx, choices[1], &built);
+    try std.testing.expectEqual(@as(anyerror, error.FileNotFound), built);
+    try auto.buildValueInto(anyerror, WithErrors, ctx, choices[2], &built);
+    try std.testing.expectEqual(@as(anyerror, error.AccessDenied), built);
+}

@@ -30,9 +30,9 @@ pub const Spec = call_specs.Spec;
 // shallow enough to stop a cycle at once.
 pub const value_depth_limit = 12;
 
-// The error handed to a parameter that takes an error set containing any error (`anyerror`). Which
-// error it is almost never decides a branch and where it does the code is comparing against its
-// own. A narrower error set is handed its first error.
+// The error handed to a parameter that takes an error set containing any error (`anyerror`). A
+// narrower error set is handed its first error. Where the error decides a branch, as in a `switch`
+// that words each error, value factories that return the error set give the others.
 pub const supplied_error = error.SimSuppliedError;
 
 // What a call under way is given. A context is copied freely: the pieces that change are behind
@@ -639,10 +639,16 @@ pub fn buildValue(comptime T: type, comptime Locator: type, ctx: Context(Locator
 }
 
 // Builds the value for one choice into a slot. The same as `buildValue` and the only way to build
-// an error set, which is given its first error (or the supplied error for `anyerror`) whatever the
-// choice.
+// an error set, which is given the error a value factory returns for a factory choice and its first
+// error (or the supplied error for `anyerror`) for any other.
 pub fn buildValueInto(comptime T: type, comptime Locator: type, ctx: Context(Locator), choice: Choice, slot: *T) anyerror!void {
     if (comptime @typeInfo(T) == .error_set) {
+        if (comptime Locator.canMake(T)) {
+            if (choice.source == .factory) {
+                try ctx.locator.makeInto(T, choice.index, Builder(Locator){ .ctx = ctx }, slot);
+                return;
+            }
+        }
         slot.* = suppliedErrorOf(T);
         return;
     }
@@ -740,7 +746,7 @@ pub fn listChoices(comptime T: type, comptime Locator: type, ctx: Context(Locato
 
 // Adds one choice for each value factory of `T`.
 fn appendFactoryChoices(comptime T: type, comptime Locator: type, ctx: Context(Locator), list: *std.ArrayList(Choice)) anyerror!void {
-    if (comptime Locator.canMake(T) and @typeInfo(T) != .error_set) {
+    if (comptime Locator.canMake(T)) {
         for (0..Locator.count(T)) |index| {
             try list.append(ctx.arena, .{ .source = .factory, .index = @intCast(index) });
         }

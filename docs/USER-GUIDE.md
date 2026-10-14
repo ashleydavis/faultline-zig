@@ -336,6 +336,8 @@ pub fn myExpectation(context: *sim.ExpectationContext) anyerror!void {
 
 kcov counts a line as run whether or not the body of a branch on that line ran. In `if (x) return 1;` on one line, kcov cannot tell whether the `return` ran, so the branch can look covered when only its condition ran. Put the body on its own line and kcov can tell the two apart.
 
+The compiler can also leave a line with no code at all. A `switch` whose arms only give constant values, such as `error.FileNotFound => "no such file or directory",`, is turned into a table, and kcov lists no code for those arms' lines, so no call can ever show them running. Faultline leaves such a code path out of the counts and out of the checklist, and the report file lists it as `not provable`.
+
 ## When Faultline finds a failure
 
 Faultline prints what failed and the command that repeats it:

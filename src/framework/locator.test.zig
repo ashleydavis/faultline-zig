@@ -219,3 +219,35 @@ test "a struct factory offers the first values of its sequence as separate choic
     try std.testing.expect(first != second);
     try std.testing.expect(second != third);
 }
+
+// A sim file with value factories for an error set, standing alone and as a method of a struct.
+const ErrorFile = struct {
+    pub fn missingFile() anyerror {
+        return error.FileNotFound;
+    }
+
+    pub const Counting = struct {
+        calls: u8 = 0,
+
+        pub fn next(self: *Counting) anyerror {
+            self.calls += 1;
+            return if (self.calls == 1) error.First else error.Later;
+        }
+    };
+};
+
+// Stands in for what builds a factory's own parameters. The factories here take none.
+const NoParameters = struct {
+    pub fn fill(_: @This(), comptime Parameter: type, _: *Parameter) anyerror!void {}
+};
+
+test "makeInto writes the error a value factory for an error set returns" {
+    var factories = locator.Locator(ErrorFile).init();
+    var made: anyerror = undefined;
+
+    try factories.makeInto(anyerror, 0, NoParameters{}, &made);
+    try std.testing.expectEqual(@as(anyerror, error.FileNotFound), made);
+    try factories.makeInto(anyerror, 1, NoParameters{}, &made);
+    try std.testing.expectEqual(@as(anyerror, error.First), made);
+    try std.testing.expectError(error.NoSuchValueFactory, factories.makeInto(anyerror, 99, NoParameters{}, &made));
+}

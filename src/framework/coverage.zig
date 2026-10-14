@@ -12,7 +12,9 @@
 // same line as its condition, because that line runs whether or not the branch was taken. Those
 // are left out of the checklist (and so out of the percentage and out of the list of what is
 // unticked) and only counted, in `Checklist.unprovable`. `and`, `or` and `try` are not code paths
-// at all.
+// at all. A code path whose line the build turns out to have no code for, such as a `switch` arm
+// whose value is a constant that the compiler turns into a table, cannot be proved either: once
+// kcov says the line has no code, it is left out of the counts and of the list of what is unticked.
 //
 // Only branches written as statements or as a value are found by walking the parser's node array,
 // at any depth, including inside `catch` bodies and `defer` bodies. A function declared inside the
@@ -105,25 +107,39 @@ pub const Checklist = struct {
         }
     }
 
-    // Whether every code path has been ticked. A function with no code path at all is complete.
+    // Whether every code path that can be proved has been ticked. A function with no code path at
+    // all is complete.
     pub fn allTicked(self: Checklist) bool {
         return self.untickedCount() == 0;
     }
 
     // How many code paths have been ticked.
     pub fn tickedCount(self: Checklist) usize {
-        return self.paths.len - self.untickedCount();
-    }
-
-    // How many code paths have not been ticked.
-    pub fn untickedCount(self: Checklist) usize {
         var count: usize = 0;
         for (self.ticked) |value| {
-            if (!value) {
+            if (value) {
                 count += 1;
             }
         }
         return count;
+    }
+
+    // How many code paths have not been ticked and can be: a code path whose line the build has
+    // no code for can never be ticked, so it is not one a run failed to reach.
+    pub fn untickedCount(self: Checklist) usize {
+        var count: usize = 0;
+        for (self.ticked, self.paths) |value, path| {
+            if (!value and !path.line_missing) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    // How many code paths a run can prove: every one except those no run ticked whose line the
+    // build has no code for. These are the code paths the counts and the percentage are of.
+    pub fn provableCount(self: Checklist) usize {
+        return self.tickedCount() + self.untickedCount();
     }
 };
 
@@ -293,7 +309,9 @@ pub const UntickedPath = struct {
     line_missing: bool,
 };
 
-// Every code path of every checklist that is not ticked, in checklist order and then path order.
+// Every code path of every checklist that is not ticked and can be, in checklist order and then
+// path order. A code path whose line the build has no code for is left out, because no run could
+// ever tick it.
 // The slice is owned by the caller and freed with `allocator.free`. Its strings point into
 // `checklists` and live as long as they do.
 pub fn listUnticked(allocator: std.mem.Allocator, checklists: []const Checklist) std.mem.Allocator.Error![]UntickedPath {
@@ -301,7 +319,7 @@ pub fn listUnticked(allocator: std.mem.Allocator, checklists: []const Checklist)
     errdefer found.deinit(allocator);
     for (checklists) |checklist| {
         for (checklist.paths, 0..) |path, index| {
-            if (checklist.ticked[index]) {
+            if (checklist.ticked[index] or path.line_missing) {
                 continue;
             }
             try found.append(allocator, .{
@@ -342,7 +360,7 @@ pub fn countPaths(checklists: []const Checklist) Counts {
     var counts: Counts = .{ .ticked = 0, .total = 0 };
     for (checklists) |checklist| {
         counts.ticked += checklist.tickedCount();
-        counts.total += checklist.paths.len;
+        counts.total += checklist.provableCount();
     }
     return counts;
 }

@@ -82,3 +82,26 @@ test "no namespaces means nothing can be made" {
     try std.testing.expect(!Nothing.canMake(Item));
     try std.testing.expectEqual(@as(usize, 0), Nothing.count(Item));
 }
+
+// Two sim files that each word an error, for the error set factories of a combined locator.
+const FirstErrors = struct {
+    pub fn missingFile() anyerror {
+        return error.FileNotFound;
+    }
+};
+const SecondErrors = struct {
+    pub fn deniedAccess() anyerror {
+        return error.AccessDenied;
+    }
+};
+
+test "makeInto counts through the namespaces in order for an error set" {
+    var both = locators.Combined(&.{ FirstErrors, SecondErrors }).init();
+    var made: anyerror = undefined;
+
+    try both.makeInto(anyerror, 0, NoBuilder{}, &made);
+    try std.testing.expectEqual(@as(anyerror, error.FileNotFound), made);
+    try both.makeInto(anyerror, 1, NoBuilder{}, &made);
+    try std.testing.expectEqual(@as(anyerror, error.AccessDenied), made);
+    try std.testing.expectError(error.NoSuchValueFactory, both.makeInto(anyerror, 2, NoBuilder{}, &made));
+}

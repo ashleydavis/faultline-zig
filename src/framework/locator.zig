@@ -263,6 +263,41 @@ pub fn Locator(comptime Namespace: type) type {
             }
             return error.NoSuchValueFactory;
         }
+
+        // Calls the factory at `index` as `make` does and writes its value into `slot`. The only
+        // way to call a factory for an error set, which cannot be the payload of the error union
+        // `make` returns, so a factory for an error set returns the error as its value.
+        pub fn makeInto(self: *Self, comptime T: type, index: usize, builder: anytype, slot: *T) anyerror!void {
+            if (comptime @typeInfo(T) != .error_set) {
+                slot.* = try self.make(T, index, builder);
+                return;
+            }
+            var seen: usize = 0;
+            inline for (comptime matchesFor(T)) |match| {
+                if (index >= seen and index < seen + comptime repeatsOf(match)) {
+                    const times = index - seen + 1;
+                    const function = if (match.owner) |owner| @field(state_types[owner], match.name) else @field(Namespace, match.name);
+                    var args: std.meta.ArgsTuple(@TypeOf(function)) = undefined;
+                    inline for (&args, 0..) |*argument, position| {
+                        if (comptime match.owner != null and position == 0) {
+                            argument.* = &self.receivers[match.owner.?];
+                        } else {
+                            try builder.fill(@TypeOf(argument.*), argument);
+                        }
+                    }
+                    // As in `make`: a struct factory is called once more for each place later in
+                    // its series, and the last value is the one handed over.
+                    var round: usize = 0;
+                    while (round + 1 < times) : (round += 1) {
+                        slot.* = @call(.auto, function, args);
+                    }
+                    slot.* = @call(.auto, function, args);
+                    return;
+                }
+                seen += comptime repeatsOf(match);
+            }
+            return error.NoSuchValueFactory;
+        }
     };
 }
 

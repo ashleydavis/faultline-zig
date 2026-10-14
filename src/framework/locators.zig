@@ -6,7 +6,8 @@ const std = @import("std");
 const locator = @import("locator.zig");
 
 // A locator that asks each namespace's own locator in turn, in the order the namespaces are given.
-// It has the same interface as `locator.Locator`: `init`, `reset`, `canMake`, `count` and `make`.
+// It has the same interface as `locator.Locator`: `init`, `reset`, `canMake`, `count`, `make` and
+// `makeInto`.
 pub fn Combined(comptime namespaces: []const type) type {
     return struct {
         const Self = @This();
@@ -63,6 +64,20 @@ pub fn Combined(comptime namespaces: []const type) type {
                 const here = locator.Locator(namespace).count(T);
                 if (index < before + here) {
                     return self.parts[part].make(T, index - before, builder);
+                }
+                before += here;
+            }
+            return error.NoSuchValueFactory;
+        }
+
+        // Calls the factory at `index` and writes its value into `slot`, counting through the
+        // namespaces in order. The only way to call a factory for an error set.
+        pub fn makeInto(self: *Self, comptime T: type, index: usize, builder: anytype, slot: *T) anyerror!void {
+            var before: usize = 0;
+            inline for (namespaces, 0..) |namespace, part| {
+                const here = locator.Locator(namespace).count(T);
+                if (index < before + here) {
+                    return self.parts[part].makeInto(T, index - before, builder, slot);
                 }
                 before += here;
             }

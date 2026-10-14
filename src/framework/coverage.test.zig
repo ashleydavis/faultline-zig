@@ -984,3 +984,25 @@ test "percentageOf rounds down and reads a run with no code path as complete" {
     try std.testing.expectEqual(@as(usize, 99), coverage.percentageOf(199, 200));
     try std.testing.expectEqual(@as(usize, 66), coverage.percentageOf(2, 3));
 }
+
+test "a code path whose line has no code is left out of the counts and of what is unticked" {
+    const allocator = std.testing.allocator;
+    const checklists = try coverage.buildFile(allocator, "src/thing.zig", thing_source);
+    defer coverage.freeChecklists(allocator, checklists);
+
+    // Lines 2 and 3 ran and line 5, the witness of the false side, has no code.
+    var lines = try linesWith(allocator, &.{ 2, 3 }, &.{ 2, 3 });
+    defer lines.deinit(allocator);
+    checklists[0].tickFromLines(&lines);
+    checklists[0].markMissingLines(&lines);
+
+    try std.testing.expect(checklists[0].allTicked());
+    try std.testing.expectEqual(@as(usize, 0), checklists[0].untickedCount());
+    try std.testing.expectEqual(checklists[0].tickedCount(), checklists[0].provableCount());
+    try std.testing.expectEqual(checklists[0].paths.len - 1, checklists[0].provableCount());
+    const counts = coverage.countPaths(checklists);
+    try std.testing.expectEqual(counts.ticked, counts.total);
+    const unticked = try coverage.listUnticked(allocator, checklists);
+    defer allocator.free(unticked);
+    try std.testing.expectEqual(@as(usize, 0), unticked.len);
+}

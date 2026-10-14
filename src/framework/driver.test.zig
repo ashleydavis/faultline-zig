@@ -2,6 +2,7 @@ const std = @import("std");
 const driver = @import("driver.zig");
 const project = @import("project.zig");
 const coverage = @import("coverage.zig");
+const checklist = @import("checklist.zig");
 
 const Alpha = struct {
     pub fn double(x: u32) u32 {
@@ -123,7 +124,7 @@ test "readSource reads a file under the sources root as text ending in zero" {
     try std.testing.expectEqualStrings("pub fn run() void {}\n", source);
 }
 
-test "writeFullReport lists every code path and every failure and makes the folder it is written in" {
+test "writeFullReport lists every code path, every failure and every thing to do and makes the folder it is written in" {
     const source = "pub fn run() void {\n    if (true) {\n        return;\n    }\n}\n";
     const checklists = try coverage.buildFile(std.testing.allocator, "a.zig", source);
     defer coverage.freeChecklists(std.testing.allocator, checklists);
@@ -138,13 +139,15 @@ test "writeFullReport lists every code path and every failure and makes the fold
     // The driver gives this function an arena, which is released all at once, so the test does too.
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    try driver.writeFullReport(Subject, arena.allocator(), std.testing.io, path, checklists, &failures);
+    const items = [_]checklist.Item{.{ .kind = .scenario, .name = "if:2:false", .file = "a.zig", .line = 2, .function = "run" }};
+    try driver.writeFullReport(Subject, arena.allocator(), std.testing.io, path, checklists, &failures, &items);
 
     const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "not exercised a.zig:") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "failed double crash: boom") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "-Dreplay=\"a.zig:double;seed=1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "to do Write a scenario exercising the false side of the if at a.zig:2 in run.\n") != null);
 }
 
 test "writeExitFile writes the exit code as text" {

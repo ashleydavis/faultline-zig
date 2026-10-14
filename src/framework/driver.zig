@@ -747,7 +747,7 @@ fn report(
             previous_file = one.file;
         }
         const ticked = one.tickedCount();
-        const total = one.paths.len;
+        const total = one.provableCount();
         const standing = standingOf(Subject, standings, one.file, one.function);
         const mark = if (one.allTicked()) style.pass() else style.miss();
         if (standing != null and standing.?.was_called) {
@@ -794,7 +794,7 @@ fn report(
     }
 
     if (args.report) |report_path| {
-        try writeFullReport(Subject, allocator, io, report_path, checklists, failures);
+        try writeFullReport(Subject, allocator, io, report_path, checklists, failures, items.items);
         output_mod.print("  Full detail is in {s}.\n", .{report_path});
     }
 
@@ -850,7 +850,8 @@ pub fn containsName(names: []const []const u8, name: []const u8) bool {
     return false;
 }
 
-// Writes every code path, exercised or not, and every failure to the report file.
+// Writes every code path, exercised or not, every failure and every thing to do to the report
+// file.
 pub fn writeFullReport(
     comptime Subject: type,
     allocator: std.mem.Allocator,
@@ -858,17 +859,20 @@ pub fn writeFullReport(
     path: []const u8,
     checklists: []const coverage.Checklist,
     failures: []const worker.Failure,
+    items: []const checklist_mod.Item,
 ) !void {
     var text: std.Io.Writer.Allocating = .init(allocator);
     for (checklists) |one| {
         for (one.paths, one.ticked) |code_path, is_ticked| {
-            try text.writer.print("{s} {s}:{d} {s} in {s}\n", .{ if (is_ticked) "exercised" else "not exercised", one.file, code_path.line, code_path.name, one.function });
+            const state = if (is_ticked) "exercised" else if (code_path.line_missing) "not provable" else "not exercised";
+            try text.writer.print("{s} {s}:{d} {s} in {s}\n", .{ state, one.file, code_path.line, code_path.name, one.function });
         }
     }
     for (failures) |failure| {
         try text.writer.print("failed {s} {s}: {s} {s}\n", .{ subjectName(Subject, failure), @tagName(failure.kind), failure.complaint, failure.text });
         try text.writer.print("  replay with -Dreplay=\"{s}\"\n", .{failure.token});
     }
+    try checklist_mod.writeAll(&text.writer, items);
     if (std.fs.path.dirname(path)) |parent| {
         try std.Io.Dir.cwd().createDirPath(io, parent);
     }

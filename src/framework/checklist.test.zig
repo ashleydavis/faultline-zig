@@ -106,3 +106,19 @@ test "a generic function item asks for a scenario that calls it" {
 
     try std.testing.expect(std.mem.indexOf(u8, text, "Write a scenario that calls first at lists.zig:4. It is generic, so Faultline cannot work out what its type parameters stand for.") != null);
 }
+
+test "writeAll writes every item, past the terminal limit, one line each in the order they are printed" {
+    var items: [checklist.terminal_limit + 2]checklist.Item = undefined;
+    for (&items, 0..) |*item, index| {
+        item.* = .{ .kind = .scenario, .name = "if:9:false", .file = "a.zig", .line = @intCast(index + 1), .function = "run" };
+    }
+    items[items.len - 1] = .{ .kind = .value_factory, .type_name = "T", .file = "b.zig", .line = 3, .function = "second" };
+    var written: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer written.deinit();
+
+    try checklist.writeAll(&written.writer, &items);
+
+    try std.testing.expectEqual(items.len, std.mem.count(u8, written.written(), "\n"));
+    try std.testing.expect(std.mem.startsWith(u8, written.written(), "to do Write a value factory returning T, which second takes."));
+    try std.testing.expect(std.mem.indexOf(u8, written.written(), "to do Write a scenario exercising the false side of the if at a.zig:11 in run.\n") != null);
+}

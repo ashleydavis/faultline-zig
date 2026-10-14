@@ -155,22 +155,43 @@ pub fn print(items: []const Item, style: Style, report_path: []const u8) void {
 // One line of the list. Every one is a sentence that says what to write and where, so it can be
 // acted on without the rest of the report being read.
 fn printOne(item: Item, style: Style) void {
+    // Far longer than any sentence, whose parts are a type name, a function name and a path.
+    var buffer: [2048]u8 = undefined;
+    var sentence = std.Io.Writer.fixed(&buffer);
+    writeSentence(&sentence, item) catch {};
+    output_mod.print("    {s}{s}{s}\n", .{ style.dim(), sentence.buffered(), style.reset() });
+}
+
+// Writes every item to `writer`, one line each in the order the terminal lists them, each line
+// starting with `to do`, so the report file holds the items the terminal leaves out.
+pub fn writeAll(writer: *std.Io.Writer, items: []const Item) std.Io.Writer.Error!void {
+    for (kind_order) |kind| {
+        for (items) |item| {
+            if (item.kind != kind) {
+                continue;
+            }
+            try writer.writeAll("to do ");
+            try writeSentence(writer, item);
+            try writer.writeByte('\n');
+        }
+    }
+}
+
+// Writes the sentence that says what to do about `item`.
+fn writeSentence(writer: *std.Io.Writer, item: Item) std.Io.Writer.Error!void {
     switch (item.kind) {
-        .value_factory => output_mod.print(
-            "    {s}Write a value factory returning {s}, which {s} takes. Without one, {s} at {s}:{d} cannot be called at all.{s}\n",
-            .{ style.dim(), item.type_name, item.function, item.function, item.file, item.line, style.reset() },
+        .value_factory => try writer.print(
+            "Write a value factory returning {s}, which {s} takes. Without one, {s} at {s}:{d} cannot be called at all.",
+            .{ item.type_name, item.function, item.function, item.file, item.line },
         ),
-        .generic_function => output_mod.print(
-            "    {s}Write a scenario that calls {s} at {s}:{d}. It is generic, so Faultline cannot work out what its type parameters stand for.{s}\n",
-            .{ style.dim(), item.function, item.file, item.line, style.reset() },
+        .generic_function => try writer.print(
+            "Write a scenario that calls {s} at {s}:{d}. It is generic, so Faultline cannot work out what its type parameters stand for.",
+            .{ item.function, item.file, item.line },
         ),
         .scenario => {
             var buffer: [128]u8 = undefined;
             const phrase = phraseFor(&buffer, item.name) orelse "this code path";
-            output_mod.print(
-                "    {s}Write a scenario exercising {s} at {s}:{d} in {s}.{s}\n",
-                .{ style.dim(), phrase, item.file, item.line, item.function, style.reset() },
-            );
+            try writer.print("Write a scenario exercising {s} at {s}:{d} in {s}.", .{ phrase, item.file, item.line, item.function });
         },
     }
 }
