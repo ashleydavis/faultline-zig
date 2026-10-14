@@ -139,6 +139,8 @@ For each function, Faultline does the following, in order:
 2. For each place it has seen and each failure that can happen there, Faultline calls the function again and makes exactly that failure happen. `FAILURES.md` lists the failures. These calls can reach new places and Faultline does the same for them.
 3. Faultline asks kcov which code paths have still not been exercised. For each one it reads the conditions in your source and calls the function again with values on each side of them.
 
+Faultline makes the calls of steps 1 and 2 in rounds and asks kcov after each round which code paths are exercised. It stops calling a function once every one of that function's own code paths is exercised and so is every code path of the functions in the same file that Faultline does not call itself, because those are reached only through their callers.
+
 Faultline gives up on a code path only when it has tried every value and every failure it has for that code path: the input values it picks, the values it reads from the conditions in your source and every failure at every place it can happen. A code path it gives up on becomes a checklist item asking for a scenario.
 
 Faultline picks input values from the boundary values of each type (zero, one, minus one, the type's minimum and maximum, an empty slice, a one element slice, an empty string, a one character string, false and true, every enum tag, null and not null), plus a few from a random number generator. Each run starts the generator from a new seed. A replay starts it from the seed of the run it replays, so the same values come up again.

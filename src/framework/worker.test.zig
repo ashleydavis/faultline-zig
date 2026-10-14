@@ -88,7 +88,7 @@ fn options() worker.Options {
 test "work written as text reads back" {
     const items = [_]worker.WorkItem{
         .{ .function = .{ .index = 4, .phase = .normal } },
-        .{ .function = .{ .index = 9, .phase = .conditions } },
+        .{ .function = .{ .index = 9, .phase = .conditions, .first = 32, .count = 64 } },
         .{ .scenario = 2 },
     };
     var buffer: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -100,7 +100,11 @@ test "work written as text reads back" {
 
     try std.testing.expectEqual(@as(usize, 3), read.len);
     try std.testing.expectEqual(@as(usize, 4), read[0].function.index);
+    try std.testing.expectEqual(@as(usize, 0), read[0].function.first);
+    try std.testing.expectEqual(std.math.maxInt(usize), read[0].function.count);
     try std.testing.expectEqual(worker.Phase.conditions, read[1].function.phase);
+    try std.testing.expectEqual(@as(usize, 32), read[1].function.first);
+    try std.testing.expectEqual(@as(usize, 64), read[1].function.count);
     try std.testing.expectEqual(@as(usize, 2), read[2].scenario);
 }
 
@@ -243,6 +247,23 @@ test "the conditions phase reads the function's source and adds specifications t
 
     try std.testing.expect(first.tallies[0].specifications > 0);
     try std.testing.expect(second.tallies[0].specifications > 0);
+}
+
+test "a work item makes calls with only the specifications its first and count pick" {
+    const all = [_]worker.WorkItem{.{ .function = .{ .index = indexOf("classify"), .phase = .normal } }};
+    const some = [_]worker.WorkItem{.{ .function = .{ .index = indexOf("classify"), .phase = .normal, .first = 1, .count = 2 } }};
+    const past_end = [_]worker.WorkItem{.{ .function = .{ .index = indexOf("classify"), .phase = .normal, .first = 1_000_000, .count = 2 } }};
+
+    var all_result = try worker.run(Subject, std.testing.allocator, std.testing.io, options(), &all);
+    defer all_result.deinit();
+    var some_result = try worker.run(Subject, std.testing.allocator, std.testing.io, options(), &some);
+    defer some_result.deinit();
+    var past_end_result = try worker.run(Subject, std.testing.allocator, std.testing.io, options(), &past_end);
+    defer past_end_result.deinit();
+
+    try std.testing.expect(all_result.tallies[0].specifications > 3);
+    try std.testing.expectEqual(@as(usize, 2), some_result.tallies[0].specifications);
+    try std.testing.expectEqual(@as(usize, 0), past_end_result.tallies[0].specifications);
 }
 
 test "the thread number the standard library puts before a panic message is left out of a complaint" {

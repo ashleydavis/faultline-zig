@@ -246,22 +246,71 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
 
     try std.Io.Dir.cwd().createDirPath(io, args.kcov_output);
 
-    // First pass: every function with the values Faultline picks, and every scenario.
-    var first: std.ArrayList(worker.WorkItem) = .empty;
+    // Rounds. kcov reports what ran only when the worker it watches exits, so the calls are made a
+    // round at a time: each round makes the next calls of every function that still has a code path
+    // not exercised, in the order its specifications are listed (its first values, then one value
+    // changed at a time, then every combination), and the coverage read after it decides which
+    // functions are done. A function is done when every one of its code paths is exercised and so
+    // is every path of the functions in its file that Faultline does not call itself, or when it
+    // has no calls left. The run stops when every function is done.
+    const totals = try allocator.alloc(usize, Subject.function_entries.len);
+    const next = try allocator.alloc(usize, Subject.function_entries.len);
+    const done = try allocator.alloc(bool, Subject.function_entries.len);
+    @memset(next, 0);
+    @memset(done, false);
+    var spec_arena = std.heap.ArenaAllocator.init(allocator);
+    defer spec_arena.deinit();
     for (selected.items) |index| {
-        if (Subject.function_entries[index].can_call) {
-            try first.append(allocator, .{ .function = .{ .index = index, .phase = .normal } });
-        }
-    }
-    for (Subject.scenario_entries, 0..) |entry, index| {
-        if (selection.includesScenario(entry.file)) {
-            try first.append(allocator, .{ .scenario = index });
-        }
+        const entry = Subject.function_entries[index];
+        totals[index] = if (entry.can_call) (try entry.list_specs(spec_arena.allocator(), io, seed, &.{})).len else 0;
+        done[index] = !entry.can_call;
     }
     output_mod.print("  Reading which code paths those calls exercised.\n", .{});
-    try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, 1, first.items, checklists.items, standings, &failures);
+    var round: usize = 1;
+    while (true) : (round += 1) {
+        const chunk = roundSize(round);
+        var items: std.ArrayList(worker.WorkItem) = .empty;
+        for (selected.items) |index| {
+            if (done[index] or next[index] >= totals[index]) {
+                continue;
+            }
+            const count = @min(chunk, totals[index] - next[index]);
+            try items.append(allocator, .{ .function = .{ .index = index, .phase = .normal, .first = next[index], .count = count } });
+            next[index] += count;
+        }
+        if (round == 1) {
+            for (Subject.scenario_entries, 0..) |entry, index| {
+                if (selection.includesScenario(entry.file)) {
+                    try items.append(allocator, .{ .scenario = index });
+                }
+            }
+        }
+        if (items.items.len == 0) {
+            break;
+        }
+        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, items.items, checklists.items, standings, &failures);
+        for (selected.items) |index| {
+            if (done[index]) {
+                continue;
+            }
+            const entry = Subject.function_entries[index];
+            var called: std.ArrayList([]const u8) = .empty;
+            for (Subject.function_entries) |other| {
+                if (other.can_call and std.mem.eql(u8, other.file, entry.file)) {
+                    try called.append(allocator, other.name);
+                }
+            }
+            const own_left = hasUntickedPath(checklists.items, entry.file, entry.name);
+            const private_left = hasUntickedPathOutside(checklists.items, entry.file, called.items);
+            if (!own_left and !private_left) {
+                done[index] = true;
+            } else if (next[index] >= totals[index]) {
+                done[index] = true;
+            }
+        }
+    }
 
-    // Second pass: for each function with a code path still not exercised, the values read from
+    // Last pass: for each function with a code path still not exercised, the values read from
     // the conditions in its source.
     var second: std.ArrayList(worker.WorkItem) = .empty;
     for (selected.items) |index| {
@@ -274,7 +323,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         }
     }
     if (second.items.len != 0) {
-        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, 2, second.items, checklists.items, standings, &failures);
+        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, second.items, checklists.items, standings, &failures);
     }
 
     const elapsed = started_at.durationTo(std.Io.Clock.Timestamp.now(io, .awake));
@@ -360,6 +409,34 @@ pub fn readSource(allocator: std.mem.Allocator, io: std.Io, sources_root: []cons
     var directory = try std.Io.Dir.cwd().openDir(io, sources_root, .{});
     defer directory.close(io);
     return directory.readFileAllocOptions(io, file, allocator, .unlimited, .of(u8), 0);
+}
+
+// How many specifications a function's calls take in round `round`: a small first round that holds
+// its first values and the start of its single changes, then twice as many each round, so a function
+// done early costs few calls and one that is not reaches its last specification in few rounds.
+pub fn roundSize(round: usize) usize {
+    // Large enough to hold a typical function's first values and single changes, so most functions
+    // are done after one round.
+    const first_round_size: usize = 32;
+    // Twenty doublings is far beyond any function's count of specifications, and keeps the shift
+    // from overflowing.
+    const shift: u6 = @intCast(@min(round - 1, 20));
+    return first_round_size << shift;
+}
+
+// Whether `file` has a code path not exercised in a function Faultline does not call itself, one
+// that is not named in `called`. Such a function runs only through the callers in its file, so
+// those callers are given the combinations of values that might reach it.
+pub fn hasUntickedPathOutside(checklists: []const coverage.Checklist, file: []const u8, called: []const []const u8) bool {
+    for (checklists) |one| {
+        if (!std.mem.eql(u8, one.file, file) or one.allTicked()) {
+            continue;
+        }
+        if (!containsName(called, one.function)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Whether the function called `name` in `file` has a code path nothing exercised.

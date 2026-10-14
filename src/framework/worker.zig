@@ -22,7 +22,7 @@ const wire = @import("wire.zig");
 
 // Which choices of values a function's calls are made with.
 pub const Phase = enum {
-    // The boundary values, the seeded values and the value factories.
+    // The boundary values, the seeded values and the value factories, in every combination.
     normal,
 
     // Only the specifications that carry a value read from a condition in the function.
@@ -32,7 +32,9 @@ pub const Phase = enum {
 // One thing a worker is asked to do.
 pub const WorkItem = union(enum) {
     // Call the function at this index of the project's function table.
-    function: struct { index: usize, phase: Phase },
+    // `first` and `count` pick which of the function's specifications, in the order they are listed,
+    // this item makes calls with, so a run can make them a round at a time.
+    function: struct { index: usize, phase: Phase, first: usize = 0, count: usize = std.math.maxInt(usize) },
 
     // Run the scenario at this index of the project's scenario table.
     scenario: usize,
@@ -219,7 +221,7 @@ pub fn run(comptime Subject: type, allocator: std.mem.Allocator, real_io: std.Io
                 if (!entry.can_call) {
                     continue;
                 }
-                try runFunction(allocator, room, real_io, options, entry, function.index, function.phase, &tallies, &failures);
+                try runFunction(allocator, room, real_io, options, entry, function.index, function.phase, function.first, function.count, &tallies, &failures);
             },
             .scenario => |index| {
                 if (comptime Subject.scenario_entries.len == 0) {
@@ -245,6 +247,8 @@ fn runFunction(
     entry: project.FunctionEntry,
     index: usize,
     phase: Phase,
+    first: usize,
+    count: usize,
     tallies: *std.ArrayList(Tally),
     failures: *std.ArrayList(Failure),
 ) !void {
@@ -258,9 +262,18 @@ fn runFunction(
 
     const specs = try entry.list_specs(scratch.allocator(), real_io, options.seed, conditions);
     var tally: Tally = .{ .index = index, .calls = 0, .specifications = 0, .is_cut_short = false };
+    // How many of the specifications this phase takes have been seen, counting the one in hand.
+    var position: usize = 0;
     for (specs) |spec| {
         if (phase == .conditions and !hasConditionChoice(spec)) {
             continue;
+        }
+        position += 1;
+        if (position - 1 < first) {
+            continue;
+        }
+        if (position - 1 - first >= count) {
+            break;
         }
         tally.specifications += 1;
         var executor: Executor = .{
@@ -503,7 +516,7 @@ fn withoutThreadNumber(line: []const u8) []const u8 {
 pub fn writeWork(writer: *std.Io.Writer, items: []const WorkItem) std.Io.Writer.Error!void {
     for (items) |item| {
         switch (item) {
-            .function => |function| try writer.print("F\t{d}\t{s}\n", .{ function.index, @tagName(function.phase) }),
+            .function => |function| try writer.print("F\t{d}\t{s}\t{d}\t{d}\n", .{ function.index, @tagName(function.phase), function.first, function.count }),
             .scenario => |index| try writer.print("S\t{d}\n", .{index}),
         }
     }
@@ -522,7 +535,9 @@ pub fn readWork(allocator: std.mem.Allocator, text: []const u8) ![]WorkItem {
         if (std.mem.eql(u8, tag, "F")) {
             const phase_text = fields.next() orelse continue;
             const phase = std.meta.stringToEnum(Phase, phase_text) orelse continue;
-            try items.append(allocator, .{ .function = .{ .index = index, .phase = phase } });
+            const first = std.fmt.parseInt(usize, fields.next() orelse "0", 10) catch continue;
+            const count = std.fmt.parseInt(usize, fields.next() orelse "", 10) catch std.math.maxInt(usize);
+            try items.append(allocator, .{ .function = .{ .index = index, .phase = phase, .first = first, .count = count } });
         } else if (std.mem.eql(u8, tag, "S")) {
             try items.append(allocator, .{ .scenario = index });
         }

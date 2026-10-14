@@ -46,6 +46,33 @@ test "the helpers that find a function among the checklists agree on bare names"
     try std.testing.expectEqualStrings("s", driver.plural(2));
 }
 
+test "hasUntickedPathOutside finds a missed path in a function Faultline does not call itself" {
+    const source =
+        \\pub fn run() void {
+        \\    helper(true);
+        \\}
+        \\
+        \\fn helper(flag: bool) void {
+        \\    if (flag) {
+        \\        return;
+        \\    }
+        \\}
+        \\
+    ;
+    const checklists = try coverage.buildFile(std.testing.allocator, "a.zig", source);
+    defer coverage.freeChecklists(std.testing.allocator, checklists);
+
+    try std.testing.expect(driver.hasUntickedPathOutside(checklists, "a.zig", &.{"run"}));
+    try std.testing.expect(!driver.hasUntickedPathOutside(checklists, "a.zig", &.{ "run", "helper" }));
+    try std.testing.expect(!driver.hasUntickedPathOutside(checklists, "b.zig", &.{"run"}));
+}
+
+test "roundSize starts small and doubles each round" {
+    try std.testing.expectEqual(@as(usize, 32), driver.roundSize(1));
+    try std.testing.expectEqual(@as(usize, 64), driver.roundSize(2));
+    try std.testing.expectEqual(@as(usize, 128), driver.roundSize(3));
+}
+
 const worker = @import("worker.zig");
 
 test "standingOf finds the standing of a function by file and bare name" {
