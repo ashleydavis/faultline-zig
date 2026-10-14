@@ -94,8 +94,11 @@ pub fn Call(comptime Locator: type, comptime function: anytype, comptime expecta
                 writeResult(out, .{ .errored = "TheWorldCouldNotBeBegun" }, &.{});
                 return;
             };
+            // A child can make many calls, so what one call took is given back when it is done.
+            defer session.end();
 
             var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
             var locator = Locator.init();
             const ctx: Context = .{
                 .locator = &locator,
@@ -131,6 +134,11 @@ pub fn Call(comptime Locator: type, comptime function: anytype, comptime expecta
             // The places are copied before the expectation functions run, because they use the
             // world too and their calls are not places the function under test reached.
             const reached = std.heap.page_allocator.dupe(injector_mod.Place, session.places()) catch &.{};
+            defer {
+                if (reached.len != 0) {
+                    std.heap.page_allocator.free(reached);
+                }
+            }
             session.injector.plan = &.{};
 
             const final = runExpectations(&session, expectations, outcome);

@@ -173,3 +173,104 @@ test "the panic handler in a child writes the message alone and ends as an abort
     try std.testing.expectEqual(@intFromEnum(linux.SIG.ABRT), result.ending.signaled);
     try std.testing.expectEqualStrings("panic: the call went wrong\n", result.complaint);
 }
+
+// A runner for a resident child that does what each request says: says it back, complains and
+// then says it back, panics, loops, sleeps or exits.
+const Obeys = struct {
+    // How many requests this child has run, said back with each so a test can tell one child from
+    // another.
+    runs: usize = 0,
+
+    pub fn run(self: *Obeys, request: []const u8, out: *std.Io.Writer) void {
+        self.runs += 1;
+        if (std.mem.eql(u8, request, "complain")) {
+            _ = linux.write(2, "an old complaint\n", 17);
+        } else if (std.mem.eql(u8, request, "panic")) {
+            @panic("the call went wrong");
+        } else if (std.mem.eql(u8, request, "loop")) {
+            (Loops{}).run(out);
+        } else if (std.mem.eql(u8, request, "sleep")) {
+            (Sleeps{}).run(out);
+        } else if (std.mem.eql(u8, request, "exit")) {
+            linux.exit_group(3);
+        }
+        out.print("{d} {s}", .{ self.runs, request }) catch {};
+    }
+};
+
+test "a resident child makes one call after another in the same process" {
+    var resident = try isolate.Resident.start(Obeys{});
+    defer resident.stop();
+
+    var first = try resident.attempt(std.testing.allocator, "one", quick);
+    defer first.deinit(std.testing.allocator);
+    var second = try resident.attempt(std.testing.allocator, "two", quick);
+    defer second.deinit(std.testing.allocator);
+
+    try std.testing.expect(first.isClean());
+    try std.testing.expectEqualStrings("1 one", first.output);
+    try std.testing.expectEqualStrings("2 two", second.output);
+    try std.testing.expectEqual(@as(usize, 2), resident.calls);
+}
+
+test "a call that crashes a resident child says what that call complained of and ends the child" {
+    var resident = try isolate.Resident.start(Obeys{});
+    defer resident.stop();
+
+    var complained = try resident.attempt(std.testing.allocator, "complain", quick);
+    defer complained.deinit(std.testing.allocator);
+    var crashed = try resident.attempt(std.testing.allocator, "panic", quick);
+    defer crashed.deinit(std.testing.allocator);
+
+    try std.testing.expect(complained.isClean());
+    try std.testing.expect(!crashed.isClean());
+    try std.testing.expectEqual(@as(u32, @intFromEnum(linux.SIG.ABRT)), crashed.ending.signaled);
+    try std.testing.expect(std.mem.indexOf(u8, crashed.complaint, "the call went wrong") != null);
+    try std.testing.expect(std.mem.indexOf(u8, crashed.complaint, "an old complaint") == null);
+    try std.testing.expect(!resident.isRunning());
+}
+
+test "a call in a resident child that runs past the processor limit is read as a hang" {
+    const short: isolate.Limits = .{ .processor_seconds = 1, .wall_ms = 10_000 };
+    var resident = try isolate.Resident.start(Obeys{});
+    defer resident.stop();
+
+    var hung = try resident.attempt(std.testing.allocator, "loop", short);
+    defer hung.deinit(std.testing.allocator);
+    resident = try isolate.Resident.start(Obeys{});
+    var after = try resident.attempt(std.testing.allocator, "after", short);
+    defer after.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(isolate.processor_limit_signal, hung.ending.signaled);
+    try std.testing.expectEqualStrings("1 after", after.output);
+}
+
+test "a call in a resident child that takes longer than the wall limit is ended" {
+    const short: isolate.Limits = .{ .processor_seconds = 5, .wall_ms = 200 };
+    var resident = try isolate.Resident.start(Obeys{});
+    defer resident.stop();
+
+    var slept = try resident.attempt(std.testing.allocator, "sleep", short);
+    defer slept.deinit(std.testing.allocator);
+
+    try std.testing.expect(slept.ending == .timed_out);
+    try std.testing.expect(!resident.isRunning());
+}
+
+test "a call that exits a resident child is read as an exit with its status" {
+    var resident = try isolate.Resident.start(Obeys{});
+    defer resident.stop();
+
+    var exited = try resident.attempt(std.testing.allocator, "exit", quick);
+    defer exited.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u8, 3), exited.ending.exited);
+    try std.testing.expect(!resident.isRunning());
+}
+
+test "a resident child that has been stopped is not running" {
+    var resident = try isolate.Resident.start(Obeys{});
+    resident.stop();
+
+    try std.testing.expect(!resident.isRunning());
+}

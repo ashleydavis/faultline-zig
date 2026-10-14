@@ -2,7 +2,8 @@
 //
 // A worker is given a list of work: functions to call and scenarios to run. For each function it
 // lists the specifications for the parameters, and for each specification it explores the failures
-// to inject (see `explore.zig`), making each call in a child process of its own. It writes down how
+// to inject (see `explore.zig`), making the calls one after another in a child process that is
+// started again whenever a call crashes, hangs or exits. It writes down how
 // many calls each function got and every failure it found, with the replay token for each, and the
 // driver reads that after the worker exits.
 
@@ -210,6 +211,15 @@ pub fn run(comptime Subject: type, allocator: std.mem.Allocator, real_io: std.Io
     // next does not land on the end of it.
     defer output_mod.print("", .{});
 
+    var resident: Residence = .{
+        .runner = .{
+            .entries = Subject.function_entries,
+            .real_io = real_io,
+            .sources_root = options.sources_root,
+        },
+    };
+    defer resident.child.stop();
+
     for (items) |item| {
         switch (item) {
             .function => |function| {
@@ -221,7 +231,7 @@ pub fn run(comptime Subject: type, allocator: std.mem.Allocator, real_io: std.Io
                 if (!entry.can_call) {
                     continue;
                 }
-                try runFunction(allocator, room, real_io, options, entry, function.index, function.phase, function.first, function.count, &tallies, &failures);
+                try runFunction(allocator, room, real_io, options, &resident, entry, function.index, function.phase, function.first, function.count, &tallies, &failures);
             },
             .scenario => |index| {
                 if (comptime Subject.scenario_entries.len == 0) {
@@ -244,6 +254,7 @@ fn runFunction(
     room: std.mem.Allocator,
     real_io: std.Io,
     options: Options,
+    resident: *Residence,
     entry: project.FunctionEntry,
     index: usize,
     phase: Phase,
@@ -286,6 +297,7 @@ fn runFunction(
             .spec = spec,
             .conditions = conditions,
             .failures = failures,
+            .resident = resident,
         };
         defer executor.deinit();
         const outcome = try explore.explore(allocator, &executor, explore.max_injections_per_call);
@@ -314,7 +326,85 @@ pub fn readConditions(allocator: std.mem.Allocator, io: std.Io, sources_root: []
     return try conditions_reader.conditionsIn(allocator, source, bare);
 }
 
-// Makes the calls `explore` asks for, one child process each, and keeps what they show.
+// How many calls one child makes before it is replaced. Memory the code under test never frees
+// stays taken in the child, so a child is replaced before that can add up. Starting a child costs
+// about what one call does, so this many calls make that cost too small to see.
+const max_calls_per_child = 1000;
+
+// The child the calls of a worker are made in, started again after a call ends it.
+const Residence = struct {
+    // What the child runs for each call.
+    runner: ResidentRunner,
+
+    // The child, when one is running.
+    child: isolate.Resident = .{},
+
+    // Makes the call `token` names, of the function at `index` in the function table, in the child.
+    fn attempt(self: *Residence, allocator: std.mem.Allocator, index: usize, token: []const u8, limits: isolate.Limits) !isolate.Attempt {
+        if (self.child.isRunning() and self.child.calls >= max_calls_per_child) {
+            self.child.stop();
+        }
+        if (!self.child.isRunning()) {
+            self.child = try isolate.Resident.start(self.runner);
+        }
+        const request = try allocator.alloc(u8, 4 + token.len);
+        defer allocator.free(request);
+        std.mem.writeInt(u32, request[0..4], @intCast(index), .little);
+        @memcpy(request[4..], token);
+        return self.child.attempt(allocator, request, limits);
+    }
+};
+
+// What a child that makes many calls runs for each one. A request is the index of the function in
+// the function table followed by the replay token of the call, so the call made is the one a replay
+// of that token makes.
+const ResidentRunner = struct {
+    // The project's function table.
+    entries: []const project.FunctionEntry,
+
+    // The real `Io` the simulated world is layered over.
+    real_io: std.Io,
+
+    // The directory the project's sources were copied to, for reading the conditions of functions.
+    sources_root: []const u8,
+
+    // The conditions of the function called last, kept because calls of one function come one
+    // after another and reading them means parsing its source file.
+    conditions_index: ?usize = null,
+    conditions: []const condition.Condition = &.{},
+    conditions_arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator),
+
+    pub fn run(self: *ResidentRunner, request: []const u8, out: *std.Io.Writer) void {
+        if (request.len < 4) {
+            return;
+        }
+        const index = std.mem.readInt(u32, request[0..4], .little);
+        if (index >= self.entries.len) {
+            return;
+        }
+        const entry = self.entries[index];
+        var plan = plan_mod.parse(std.heap.page_allocator, request[4..]) catch return;
+        defer plan.deinit();
+        var conditions: []const condition.Condition = &.{};
+        if (hasConditionChoice(plan.choices)) {
+            if (self.conditions_index != index) {
+                _ = self.conditions_arena.reset(.free_all);
+                self.conditions = readConditions(self.conditions_arena.allocator(), self.real_io, self.sources_root, entry) catch &.{};
+                self.conditions_index = index;
+            }
+            conditions = self.conditions;
+        }
+        entry.run_here(.{
+            .seed = plan.seed,
+            .spec = plan.choices,
+            .plan = plan.injections,
+            .conditions = conditions,
+            .real_io = self.real_io,
+        }, out);
+    }
+};
+
+// Makes the calls `explore` asks for and keeps what they show.
 const Executor = struct {
     allocator: std.mem.Allocator,
     room: std.mem.Allocator,
@@ -325,6 +415,9 @@ const Executor = struct {
     spec: call_specs.Spec,
     conditions: []const condition.Condition,
     failures: *std.ArrayList(Failure),
+
+    // The child the calls are made in.
+    resident: *Residence,
 
     // What the last call reported, kept until the next call so the places it names stay valid.
     last: ?wire.Report = null,
@@ -340,20 +433,14 @@ const Executor = struct {
             report.deinit();
             self.last = null;
         }
-        var attempt = try self.entry.attempt(self.allocator, .{
-            .seed = self.options.seed,
-            .spec = self.spec,
-            .plan = plan,
-            .conditions = self.conditions,
-            .real_io = self.real_io,
-        }, self.options.limits);
+        const token = try self.tokenFor(plan);
+        var attempt = try self.resident.attempt(self.allocator, self.index, token, self.options.limits);
         defer attempt.deinit(self.allocator);
         reportProgress(self.entry.file, self.entry.name);
 
         var report = try wire.read(self.allocator, attempt.output);
         errdefer report.deinit();
 
-        const token = try self.tokenFor(plan);
         try keepFailure(self.room, self.failures, false, self.index, token, attempt, report);
 
         const is_dead_end = !attempt.isClean() or report.result == null;

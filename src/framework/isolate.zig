@@ -1,5 +1,6 @@
-// Runs one call in a forked child process so a call that crashes or never returns costs that call
-// and nothing else, and so every call starts from a process that has done nothing yet.
+// Runs calls in forked child processes so a call that crashes or never returns costs that call and
+// nothing else: one call in a child of its own (`attempt`), or many calls one after another in a
+// child that a crash, a hang or an exit ends (`Resident`).
 //
 // What the child says crosses a pipe as plain bytes, and what it complains about on its error
 // stream crosses a second pipe. The parent never trusts the child to finish: how the child ended
@@ -309,6 +310,267 @@ fn isCaughtSignalStatus(status: u8) bool {
         }
     }
     return false;
+}
+
+// A child process that makes many calls, one after another, so the cost of starting a process is
+// paid once and not once per call. Under kcov that cost is most of a call: kcov stops a process at
+// the first run of every line it watches, and a process forked fresh for each call stops again at
+// every line the call runs.
+//
+// The runner handed to `start` has a `run` method taking a request and a `*std.Io.Writer`, run in
+// the child once per request. Each call gets the same limits a call in a child of its own gets, and
+// a call that crashes, hangs or exits ends the child. The caller then starts another for the next
+// call. Requests and reports cross one socket. The child's error stream is a file in memory that is
+// emptied before each call, so what it holds after a crash is what that call said.
+pub const Resident = struct {
+    // The child, or zero when there is none.
+    pid: i32 = 0,
+
+    // This process's end of the socket to the child.
+    socket: i32 = -1,
+
+    // The file in memory that is the child's error stream.
+    complaint_file: i32 = -1,
+
+    // How many calls the child has made.
+    calls: usize = 0,
+
+    // Whether a child is there to make the next call.
+    pub fn isRunning(self: Resident) bool {
+        return self.pid != 0;
+    }
+
+    // Starts a child for `runner`.
+    pub fn start(runner: anytype) !Resident {
+        const made = linux.memfd_create("faultline-complaint", 0);
+        if (linux.errno(made) != .SUCCESS) {
+            return error.ComplaintFileFailed;
+        }
+        const complaint_file: i32 = @intCast(made);
+        errdefer _ = linux.close(complaint_file);
+        var ends: [2]i32 = undefined;
+        if (linux.errno(linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM, 0, &ends)) != .SUCCESS) {
+            return error.SocketFailed;
+        }
+        const forked = linux.fork();
+        if (linux.errno(forked) != .SUCCESS) {
+            closeBoth(ends);
+            return error.ForkFailed;
+        }
+        if (forked == 0) {
+            _ = linux.close(ends[0]);
+            reside(runner, ends[1], complaint_file);
+        }
+        _ = linux.close(ends[1]);
+        return .{ .pid = @intCast(forked), .socket = ends[0], .complaint_file = complaint_file };
+    }
+
+    // Makes one call with `request` in the child. When the call ends the child, the attempt says
+    // how, and the child is gone.
+    pub fn attempt(self: *Resident, allocator: std.mem.Allocator, request: []const u8, limits: Limits) !Attempt {
+        var header: [8]u8 = undefined;
+        std.mem.writeInt(u32, header[0..4], @intCast(request.len), .little);
+        std.mem.writeInt(u32, header[4..8], limits.processor_seconds, .little);
+        self.calls += 1;
+        const started = nowMs();
+        if (!self.send(&header) or !self.send(request)) {
+            return self.ended(allocator, false);
+        }
+        var length_bytes: [4]u8 = undefined;
+        switch (self.receive(&length_bytes, started, limits.wall_ms)) {
+            .done => {},
+            .closed => return self.ended(allocator, false),
+            .timed_out => return self.ended(allocator, true),
+        }
+        const length = std.mem.readInt(u32, &length_bytes, .little);
+        if (length > max_output_bytes) {
+            return error.OutputTooLong;
+        }
+        const output = try allocator.alloc(u8, length);
+        errdefer allocator.free(output);
+        switch (self.receive(output, started, limits.wall_ms)) {
+            .done => {},
+            .closed => {
+                allocator.free(output);
+                return self.ended(allocator, false);
+            },
+            .timed_out => {
+                allocator.free(output);
+                return self.ended(allocator, true);
+            },
+        }
+        return .{ .ending = .{ .exited = 0 }, .output = output, .complaint = try allocator.alloc(u8, 0) };
+    }
+
+    // Ends the child and waits for it to go.
+    pub fn stop(self: *Resident) void {
+        if (self.pid == 0) {
+            return;
+        }
+        _ = linux.kill(self.pid, .KILL);
+        _ = self.reap();
+        _ = linux.close(self.complaint_file);
+        self.complaint_file = -1;
+    }
+
+    // What came of a call that ended the child: how the child ended and what it said on its error
+    // stream. `timed_out` is whether the call took longer than the wall limit, and the child is
+    // killed for it.
+    fn ended(self: *Resident, allocator: std.mem.Allocator, timed_out: bool) !Attempt {
+        if (timed_out) {
+            _ = linux.kill(self.pid, .KILL);
+        }
+        const status = self.reap();
+        const complaint = try allocator.alloc(u8, max_complaint_bytes);
+        errdefer allocator.free(complaint);
+        const got = linux.pread(self.complaint_file, complaint.ptr, complaint.len, 0);
+        const kept: usize = if (linux.errno(got) == .SUCCESS) got else 0;
+        _ = linux.close(self.complaint_file);
+        self.complaint_file = -1;
+        const ending: Ending = if (timed_out)
+            .timed_out
+        else if (linux.W.IFSIGNALED(status))
+            .{ .signaled = @intFromEnum(linux.W.TERMSIG(status)) }
+        else if (isCaughtSignalStatus(linux.W.EXITSTATUS(status)))
+            .{ .signaled = linux.W.EXITSTATUS(status) - signal_exit_base }
+        else
+            .{ .exited = linux.W.EXITSTATUS(status) };
+        return .{
+            .ending = ending,
+            .output = try allocator.alloc(u8, 0),
+            .complaint = try allocator.realloc(complaint, kept),
+        };
+    }
+
+    // Closes the socket, waits for the child and forgets it. Returns how it ended.
+    fn reap(self: *Resident) u32 {
+        _ = linux.close(self.socket);
+        self.socket = -1;
+        var status: u32 = 0;
+        while (linux.errno(linux.wait4(self.pid, &status, 0, null)) == .INTR) {}
+        self.pid = 0;
+        return status;
+    }
+
+    // Sends all of `bytes`, or returns false when the child is gone. A send to a child that is gone
+    // must not end this process with `PIPE`, so the socket is written with that turned off.
+    fn send(self: *Resident, bytes: []const u8) bool {
+        var done: usize = 0;
+        while (done < bytes.len) {
+            const sent = linux.sendto(self.socket, bytes[done..].ptr, bytes.len - done, linux.MSG.NOSIGNAL, null, 0);
+            if (linux.errno(sent) == .INTR) {
+                continue;
+            }
+            if (linux.errno(sent) != .SUCCESS or sent == 0) {
+                return false;
+            }
+            done += sent;
+        }
+        return true;
+    }
+
+    // How a wait for the child's report ended.
+    const Received = enum { done, closed, timed_out };
+
+    // Fills `bytes` from the child, unless it closes the socket first or `wall_ms` passes after
+    // `started`.
+    fn receive(self: *Resident, bytes: []u8, started: u64, wall_ms: u32) Received {
+        var done: usize = 0;
+        while (done < bytes.len) {
+            const elapsed = nowMs() - started;
+            if (elapsed >= wall_ms) {
+                return .timed_out;
+            }
+            var watched = [_]linux.pollfd{.{ .fd = self.socket, .events = linux.POLL.IN, .revents = 0 }};
+            const ready = linux.poll(&watched, 1, @intCast(@min(wall_ms - elapsed, std.math.maxInt(i32))));
+            if (linux.errno(ready) == .INTR or ready == 0) {
+                continue;
+            }
+            if (linux.errno(ready) != .SUCCESS) {
+                return .closed;
+            }
+            const got = linux.read(self.socket, bytes[done..].ptr, bytes.len - done);
+            if (linux.errno(got) == .INTR) {
+                continue;
+            }
+            if (linux.errno(got) != .SUCCESS or got == 0) {
+                return .closed;
+            }
+            done += got;
+        }
+        return .done;
+    }
+};
+
+// The most a request to a resident child may hold. A request names one call, which takes far less,
+// so this only stops a request that is not one.
+const max_request_bytes = 1024 * 1024;
+
+// What a resident child does. Never returns: it ends when the socket closes or a call ends it.
+fn reside(runner_value: anytype, socket: i32, complaint_file: i32) noreturn {
+    in_child = true;
+    _ = linux.dup2(complaint_file, 2);
+    _ = linux.close(complaint_file);
+    catchCrashes();
+
+    var runner = runner_value;
+    while (true) {
+        var header: [8]u8 = undefined;
+        if (!readAll(socket, &header)) {
+            linux.exit_group(0);
+        }
+        const length = std.mem.readInt(u32, header[0..4], .little);
+        const processor_seconds = std.mem.readInt(u32, header[4..8], .little);
+        if (length > max_request_bytes) {
+            linux.exit_group(0);
+        }
+        const request = std.heap.page_allocator.alloc(u8, length) catch linux.exit_group(0);
+        defer std.heap.page_allocator.free(request);
+        if (!readAll(socket, request)) {
+            linux.exit_group(0);
+        }
+
+        // The error stream is emptied so that after a crash it holds only what this call said.
+        _ = linux.ftruncate(2, 0);
+        _ = linux.lseek(2, 0, linux.SEEK.SET);
+        limitProcessorFromNow(processor_seconds);
+
+        var report: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
+        defer report.deinit();
+        runner.run(request, &report.writer);
+
+        var length_bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &length_bytes, @intCast(report.written().len), .little);
+        writeAll(socket, &length_bytes);
+        writeAll(socket, report.written());
+    }
+}
+
+// Lets this process use `seconds` more processor time before the kernel sends `XCPU`. The limit is
+// on all the time the process has used, so it is set from what it has used so far. The hard limit
+// is left where it is, so it can be raised again for the next call.
+fn limitProcessorFromNow(seconds: u32) void {
+    var usage: linux.rusage = undefined;
+    _ = linux.getrusage(linux.rusage.SELF, &usage);
+    const used: u64 = @intCast(usage.utime.sec + usage.stime.sec + 1);
+    const processor: linux.rlimit = .{ .cur = used + seconds, .max = linux.RLIM.INFINITY };
+    _ = linux.setrlimit(.CPU, &processor);
+}
+
+// Fills `bytes` from `fd`, or returns false when it closes first.
+fn readAll(fd: i32, bytes: []u8) bool {
+    var done: usize = 0;
+    while (done < bytes.len) {
+        const got = linux.read(fd, bytes[done..].ptr, bytes.len - done);
+        if (linux.errno(got) == .INTR) {
+            continue;
+        }
+        if (linux.errno(got) != .SUCCESS or got == 0) {
+            return false;
+        }
+        done += got;
+    }
+    return true;
 }
 
 // The monotonic clock in milliseconds.

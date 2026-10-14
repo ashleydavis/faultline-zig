@@ -70,6 +70,10 @@ pub const FunctionEntry = struct {
 
     // Makes one call in a child process.
     attempt: *const fn (allocator: std.mem.Allocator, request: call_mod.Request, limits: isolate.Limits) anyerror!isolate.Attempt,
+
+    // Makes one call in this process and writes the report to `out`. Only for a child that makes
+    // calls for its parent: a call that crashes takes the process with it.
+    run_here: *const fn (request: call_mod.Request, out: *std.Io.Writer) void,
 };
 
 // One scenario of a sim file.
@@ -93,6 +97,8 @@ const Unreachable = struct {
     fn attempt(_: std.mem.Allocator, _: call_mod.Request, _: isolate.Limits) anyerror!isolate.Attempt {
         return error.CannotBeCalled;
     }
+
+    fn runHere(_: call_mod.Request, _: *std.Io.Writer) void {}
 };
 
 // The name of a sim file whose value factories are used for every file, not only the one beside it.
@@ -195,11 +201,16 @@ pub fn Project(comptime files: anytype) type {
                     .is_generic = isGeneric(@TypeOf(function)),
                     .list_specs = Unreachable.listSpecs,
                     .attempt = Unreachable.attempt,
+                    .run_here = Unreachable.runHere,
                 };
             }
             const Wrapper = struct {
                 fn attempt(allocator: std.mem.Allocator, request: call_mod.Request, limits: isolate.Limits) anyerror!isolate.Attempt {
                     return isolate.attempt(allocator, Runner.Child{ .request = request }, limits);
+                }
+
+                fn runHere(request: call_mod.Request, out: *std.Io.Writer) void {
+                    (Runner.Child{ .request = request }).run(out);
                 }
             };
             return .{
@@ -210,6 +221,7 @@ pub fn Project(comptime files: anytype) type {
                 .is_generic = false,
                 .list_specs = Runner.listSpecs,
                 .attempt = Wrapper.attempt,
+                .run_here = Wrapper.runHere,
             };
         }
 
