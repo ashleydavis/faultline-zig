@@ -143,6 +143,8 @@ Faultline gives up on a code path only when it has tried every value and every f
 
 Faultline picks input values from the boundary values of each type (zero, one, minus one, the type's minimum and maximum, an empty slice, a one element slice, an empty string, a one character string, false and true, every enum tag, null and not null), plus a few from a random number generator. Each run starts the generator from a new seed. A replay starts it from the seed of the run it replays, so the same values come up again.
 
+Faultline calls each function with every combination of the values it has for its parameters: its own values and your value factories alike.
+
 ## Step 6: Write value factories for your own types that Faultline cannot instantiate
 
 Faultline instantiates integers, floats, booleans, enums, optionals, errors, slices, arrays, plain structs, tagged unions and pointers to any of those. It also provides the allocator, `std.Io`, the network, the clock, `std.Random` and a writer. For your own types that it cannot instantiate, you write a value factory.

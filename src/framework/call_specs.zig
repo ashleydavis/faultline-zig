@@ -35,25 +35,13 @@ pub const Choice = struct {
 // What a call is made with: one choice per parameter, in parameter order.
 pub const Spec = []const Choice;
 
-// How many choices of each parameter take part in combinations with another parameter's choices.
-// Four, because the choices after the first are ordered with the fixed ones first (the factories, or
-// one, minus one, the minimum and the maximum) and those are the ones that make a second
-// parameter's branch go the other way. The rest of the choices are still tried, alone.
-pub const combination_choices_per_parameter: usize = 4;
-
-// The most combination specifications one function gets. Every specification costs a call and
-// then another call for every place a failure can be injected, so the combinations are limited to
-// a number that costs a small fraction of what the single changes cost for a function with a few
-// parameters and never more for one with many.
-pub const max_combination_specs: usize = 64;
-
-// The finite list of call specifications for a function whose parameters have the choices in
-// `lists` (one list per parameter, the first choice of each being its baseline). The list is, in
-// this order: the baseline; then every other choice of each parameter in turn with the others at
-// their baseline; then combinations of choices across two parameters, taken in rounds so each pair
-// of parameters is reached before any pair is repeated, until `max_combination_specs` is reached.
-// The same lists always give the same specifications. When any parameter has no choice at all the
-// function cannot be called and the list is empty. A function with no parameters has one
+// The list of call specifications for a function whose parameters have the choices in `lists`
+// (one list per parameter, the first choice of each being its baseline): every combination of every
+// parameter's choices, each once. The list is, in this order: the baseline; then every other choice
+// of each parameter in turn with the others at their baseline; then every combination that changes
+// two or more parameters, in the order an odometer counts them with the last parameter turning
+// fastest. The same lists always give the same specifications. When any parameter has no choice at
+// all the function cannot be called and the list is empty. A function with no parameters has one
 // specification with no choices.
 pub fn generateSpecs(allocator: std.mem.Allocator, lists: []const []const Choice) error{OutOfMemory}![]const Spec {
     for (lists) |list| {
@@ -78,30 +66,42 @@ pub fn generateSpecs(allocator: std.mem.Allocator, lists: []const []const Choice
         }
     }
 
-    var combinations: usize = 0;
-    for (1..combination_choices_per_parameter + 1) |first_rank| {
-        for (1..combination_choices_per_parameter + 1) |second_rank| {
-            for (lists, 0..) |first_list, first| {
-                if (first_rank >= first_list.len) {
-                    continue;
-                }
-                for (lists[first + 1 ..], first + 1..) |second_list, second| {
-                    if (second_rank >= second_list.len) {
-                        continue;
-                    }
-                    if (combinations == max_combination_specs) {
-                        return specs.items;
-                    }
-                    const both = try allocator.dupe(Choice, baseline);
-                    both[first] = first_list[first_rank];
-                    both[second] = second_list[second_rank];
-                    try specs.append(allocator, both);
-                    combinations += 1;
-                }
+    // The odometer: which choice of each parameter the next combination takes.
+    const at = try allocator.alloc(usize, lists.len);
+    defer allocator.free(at);
+    @memset(at, 0);
+    while (advance(at, lists)) {
+        var changed: usize = 0;
+        for (at) |index| {
+            if (index != 0) {
+                changed += 1;
             }
         }
+        if (changed < 2) {
+            continue;
+        }
+        const combination = try allocator.alloc(Choice, lists.len);
+        for (lists, at, 0..) |list, index, position| {
+            combination[position] = list[index];
+        }
+        try specs.append(allocator, combination);
     }
     return specs.items;
+}
+
+// Moves the odometer `at` on by one, the last parameter turning fastest. Returns false once every
+// combination has been counted.
+fn advance(at: []usize, lists: []const []const Choice) bool {
+    var position = at.len;
+    while (position > 0) {
+        position -= 1;
+        at[position] += 1;
+        if (at[position] < lists[position].len) {
+            return true;
+        }
+        at[position] = 0;
+    }
+    return false;
 }
 
 // Whether two specifications name the same choices.

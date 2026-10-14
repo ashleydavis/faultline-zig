@@ -65,35 +65,37 @@ test "combinations change two parameters at once and come after the single chang
     }
 }
 
-test "combinations visit every pair of parameters before repeating any" {
+test "every combination of every choice of every parameter is tried" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const lists = [_][]const Choice{
         try listOf(arena.allocator(), 3),
-        try listOf(arena.allocator(), 3),
-        try listOf(arena.allocator(), 3),
+        try listOf(arena.allocator(), 4),
+        try listOf(arena.allocator(), 5),
     };
     const specs = try call_specs.generateSpecs(arena.allocator(), &lists);
-    const first_combination = 1 + 6;
-    // The first three combinations are the first choice of each pair of parameters.
-    try std.testing.expect(call_specs.isSameSpec(specs[first_combination], &.{ boundary(1), boundary(1), boundary(0) }));
-    try std.testing.expect(call_specs.isSameSpec(specs[first_combination + 1], &.{ boundary(1), boundary(0), boundary(1) }));
-    try std.testing.expect(call_specs.isSameSpec(specs[first_combination + 2], &.{ boundary(0), boundary(1), boundary(1) }));
+    try std.testing.expectEqual(@as(usize, 3 * 4 * 5), specs.len);
 }
 
-test "combinations stop at the limit however many parameters and choices there are" {
+test "combinations change three parameters at once as well as two" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var lists: [8][]const Choice = undefined;
-    for (&lists) |*list| {
-        list.* = try listOf(arena.allocator(), 10);
-    }
+    const lists = [_][]const Choice{
+        try listOf(arena.allocator(), 2),
+        try listOf(arena.allocator(), 2),
+        try listOf(arena.allocator(), 2),
+    };
     const specs = try call_specs.generateSpecs(arena.allocator(), &lists);
-    const singles = 1 + 8 * 9;
-    try std.testing.expectEqual(singles + call_specs.max_combination_specs, specs.len);
+    var found = false;
+    for (specs) |spec| {
+        if (call_specs.isSameSpec(spec, &.{ boundary(1), boundary(1), boundary(1) })) {
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
 }
 
-test "only the first few choices of a parameter take part in combinations" {
+test "the last choices of a parameter take part in combinations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const lists = [_][]const Choice{
@@ -101,12 +103,7 @@ test "only the first few choices of a parameter take part in combinations" {
         try listOf(arena.allocator(), 20),
     };
     const specs = try call_specs.generateSpecs(arena.allocator(), &lists);
-    const singles = 1 + 19 + 19;
-    try std.testing.expectEqual(singles + call_specs.combination_choices_per_parameter * call_specs.combination_choices_per_parameter, specs.len);
-    for (specs[singles..]) |spec| {
-        try std.testing.expect(spec[0].index <= call_specs.combination_choices_per_parameter);
-        try std.testing.expect(spec[1].index <= call_specs.combination_choices_per_parameter);
-    }
+    try std.testing.expect(call_specs.isSameSpec(specs[specs.len - 1], &.{ boundary(19), boundary(19) }));
 }
 
 test "no specification repeats another" {
