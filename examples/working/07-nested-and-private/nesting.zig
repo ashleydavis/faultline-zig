@@ -1,7 +1,7 @@
 // A private function and a function declared inside another. Each is called and reported on its own.
 
-// A private function, reached only through the public one below it. It gets a line in the report
-// exactly as a public one does.
+// A private function, which Faultline calls directly as it calls the public one below it. It gets
+// a line in the report exactly as a public one does.
 fn trimmedLength(text: []const u8) usize {
     if (text.len == 0) {
         return 0;

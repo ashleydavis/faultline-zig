@@ -2,9 +2,11 @@
 // at compile time.
 //
 // Two kinds are found: public functions declared at the top of the file, and public methods of
-// public structs declared at the top of the file. A method is found only when its first parameter
-// is the struct or a pointer to it, because the receiver is built from the struct. Functions that
-// take a type parameter or are generic in another way are found too: whether they can be called is
+// public structs declared at the top of the file. The build makes every function and container of
+// a file that is fault tested public in the copy it compiles (`src/cmd/make_public.zig`), so the
+// project's private ones are found too. A method is found only when its first parameter is the
+// struct or a pointer to it, because the receiver is built from the struct. Functions that take a
+// type parameter or are generic in another way are found too: whether they can be called is
 // decided by what builds their arguments, not here.
 
 const std = @import("std");

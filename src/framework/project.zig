@@ -107,8 +107,8 @@ pub const global_sim_name = "global.sim.zig";
 // What the project offers, built from the table the build step wrote.
 pub fn Project(comptime files: anytype) type {
     return struct {
-        // The path of every source file in the table, in order. A source file with no function of
-        // its own still has code paths in the functions it keeps private.
+        // The path of every source file in the table, in order. A source file with no function
+        // Faultline can call still has code paths, in the functions declared inside others.
         pub const source_files: []const []const u8 = blk: {
             var found: []const []const u8 = &.{};
             for (files.sources) |source| {

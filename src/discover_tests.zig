@@ -5,4 +5,5 @@
 test {
     _ = @import("cmd/discover.zig");
     _ = @import("cmd/import_table.zig");
+    _ = @import("cmd/make_public.zig");
 }

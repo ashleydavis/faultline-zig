@@ -1,6 +1,6 @@
 Fault testing the Zig source in 06-unobservable.
 
-  Read 1 source file, with 3 functions to exercise.
+  Read 1 source file, with 4 functions to exercise.
   Reading which code paths those calls exercised.
 
 Fault testing
@@ -11,7 +11,7 @@ Fault testing
     ok   atEdge                           1/1 code paths
     ok   halfOrNothing                    1/1 code paths
 
-  Found 1 source file, called 3 functions and exercised 6 of 6 code paths.
+  Found 1 source file, called 4 functions and exercised 6 of 6 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
   Full detail is in <cache>/faultline-report.txt.
 

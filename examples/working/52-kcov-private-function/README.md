@@ -1,3 +1,3 @@
-# A private function covered by lines
+# A private function called directly
 
-`clamp` is private and Faultline never calls it directly. It is reached through `clampedDouble`, and kcov records its lines running there, so both of its sides are exercised.
+`clamp` is private and Faultline calls it directly, as it does `clampedDouble`, which calls it too. kcov records its lines running in both, so both of its sides are exercised.

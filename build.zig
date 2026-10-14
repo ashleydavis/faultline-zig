@@ -1,6 +1,7 @@
 const std = @import("std");
 const walk = @import("src/cmd/walk.zig");
 const import_table = @import("src/cmd/import_table.zig");
+const make_public = @import("src/cmd/make_public.zig");
 
 // Faultline's build. It declares the modules a project's build uses (`sim`, which a project's sim
 // files import, and `faultline`, which the program built for a project is made of), the step a
@@ -105,21 +106,36 @@ pub fn addFaultTest(b: *std.Build, options: FaultTestOptions) void {
     };
     defer project.close(io);
 
+    const found = walk.collect(b.allocator, io, project, .{ .include = options.include, .exclude = options.exclude }) catch {
+        @panic("faultline: the project cannot be searched");
+    };
+
     // Every `.zig` file in the project is copied, so an import in a file that is fault tested finds
     // the file it names even when that file is not itself fault tested. A file that is skipped is
-    // still copied. Only the files named in the table below are called.
+    // still copied. Only the files named in the table below are called. In the copy of each file
+    // that is fault tested every function is made public, so each one is called directly.
+    var fault_tested: std.StringHashMapUnmanaged(void) = .empty;
+    for (found) |file| {
+        if (file.kind == .source) {
+            fault_tested.put(b.allocator, file.path, {}) catch @panic("OOM");
+        }
+    }
     const written = b.addWriteFiles();
     const everything = walk.report(b.allocator, io, project, .{}) catch @panic("faultline: the project cannot be searched");
     for (everything) |record| {
         if (record.is_directory or !std.mem.endsWith(u8, record.path, ".zig")) {
             continue;
         }
-        _ = written.addCopyFile(b.path(record.path), record.path);
+        if (!fault_tested.contains(record.path)) {
+            _ = written.addCopyFile(b.path(record.path), record.path);
+            continue;
+        }
+        const source = project.readFileAllocOptions(io, record.path, b.allocator, .unlimited, .of(u8), 0) catch {
+            @panic("faultline: a file to fault test cannot be read");
+        };
+        const made = make_public.makePublic(b.allocator, source) catch @panic("OOM");
+        _ = written.add(record.path, made);
     }
-
-    const found = walk.collect(b.allocator, io, project, .{ .include = options.include, .exclude = options.exclude }) catch {
-        @panic("faultline: the project cannot be searched");
-    };
     var sources: std.ArrayList(import_table.Source) = .empty;
     var simulations: std.ArrayList(import_table.Simulation) = .empty;
     for (found) |file| {
