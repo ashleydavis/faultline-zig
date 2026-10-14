@@ -1,0 +1,3 @@
+Fault testing the Zig source in 54-kcov-not-installed.
+Faultline needs kcov to see which lines ran and could not find "/no/such/kcov", so install kcov as described in docs/USER-GUIDE.md under "Install kcov" or name it with -Dkcov=<path>.
+

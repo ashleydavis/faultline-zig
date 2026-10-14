@@ -1,0 +1,16 @@
+.{
+    .name = .faultline,
+    // Zig refuses to build without this field. Faultline is fetched by tag or commit, and this
+    // number does not track a release.
+    .version = "0.0.0",
+    .fingerprint = 0xe85551eda2248a58,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    // What a project fetching this package gets: the build file and every source directory the
+    // build file imports.
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

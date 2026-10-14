@@ -1,0 +1,17 @@
+Fault testing the Zig source in 27-if-with-no-else.
+
+  Read 1 source file, with 2 functions to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  sizing.zig
+    ok   clampToHundred                   2/2 code paths
+    ok   isLarge                          3/3 code paths
+
+  Found 1 source file, called 2 functions and exercised 5 of 5 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <cache>/faultline-report.txt.
+
+  Coverage: 5 of 5 code paths, 100%.
+

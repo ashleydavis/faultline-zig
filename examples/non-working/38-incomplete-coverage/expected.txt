@@ -1,0 +1,20 @@
+Fault testing the Zig source in 38-incomplete-coverage.
+
+  Read 1 source file, with 1 function to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  rounding.zig
+    ok   checksum                         1/1 code paths
+    MISS upTo                             6/7 code paths
+
+  Found 1 source file, called 1 function and exercised 7 of 8 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <cache>/faultline-report.txt.
+
+  One thing to do:
+    Write a scenario exercising the true side of the if at rounding.zig:19 in upTo.
+
+  Coverage: 7 of 8 code paths, 87%.
+

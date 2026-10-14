@@ -1,0 +1,19 @@
+Fault testing the Zig source in 03-if-captures.
+
+  Read 1 source file, with 3 functions to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  optionals.zig
+    ok   measure                          3/3 code paths
+    ok   lengthOr                         3/3 code paths
+    ok   lengthOrDefault                  2/2 code paths
+    ok   sizeOf                           3/3 code paths
+
+  Found 1 source file, called 3 functions and exercised 11 of 11 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <cache>/faultline-report.txt.
+
+  Coverage: 11 of 11 code paths, 100%.
+

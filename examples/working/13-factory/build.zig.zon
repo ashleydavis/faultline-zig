@@ -1,0 +1,12 @@
+.{
+    .name = .example_13_factory,
+    .fingerprint = 0x90d71b08d443527d,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        // A path, because this example lives inside the faultline repository. A project outside it
+        // declares the same dependency with a URL, fetched with `zig fetch --save=faultline`.
+        .faultline = .{ .path = "../../.." },
+    },
+    .paths = .{""},
+}

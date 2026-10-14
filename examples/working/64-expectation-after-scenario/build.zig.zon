@@ -1,0 +1,12 @@
+.{
+    .name = .example_64_after_scenario,
+    .version = "0.0.0",
+    .fingerprint = 0xdabce4d4bac2e7cc,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        // A path, because this example lives inside the faultline repository. A project outside it
+        // declares the same dependency with a URL, fetched with `zig fetch --save=faultline`.
+        .faultline = .{ .path = "../../.." },
+    },
+    .paths = .{""},
+}

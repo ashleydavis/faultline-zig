@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Refuses a commit whose checks do not pass.
+#
+# Runs `bash scripts/test-everything.sh`, which asks what-changed which targets the commit affects
+# and runs those, several at a time, stopping the moment one fails. A documentation-only commit
+# runs nothing and is accepted straight away.
+#
+# Nothing here fixes or stages anything: it reports and refuses, leaving the working copy alone.
+#
+# Named without a .sh extension against this repository's usual convention because git recognises a
+# hook only by these exact filenames.
+set -uo pipefail
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$HOOK_DIR/.." && pwd)"
+
+cd "$REPO_DIR"
+
+echo "pre-commit: running the checks this commit affects"
+
+if ! bash scripts/test-everything.sh; then
+    echo "" >&2
+    echo "pre-commit FAILED. Fix what failed and commit again." >&2
+    exit 1
+fi
+
+echo "pre-commit: passed"

@@ -1,0 +1,2 @@
+Fault testing the Zig source in 31-invalid-plan.
+The replay token could not be read: NoFunction.

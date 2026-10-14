@@ -1,0 +1,16 @@
+Fault testing the Zig source in 21-nothing-to-test.
+
+  Read 2 source files, with 1 function to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  measure.zig
+    ok   isRightOfOrigin                  3/3 code paths
+
+  Found 2 source files, called 1 function and exercised 3 of 3 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <cache>/faultline-report.txt.
+
+  Coverage: 3 of 3 code paths, 100%.
+

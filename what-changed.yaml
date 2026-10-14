@@ -1,0 +1,34 @@
+# Which checks still need to run, decided by what has changed since the last passing run.
+#
+# what-changed reports; scripts/test-everything.sh reads that report and runs the affected targets.
+# Each target captures its own baseline when it passes, so running one by hand marks it up to date
+# exactly as the full run does.
+
+# Paths that fall under every target: anything that changes how every check runs.
+always:
+  - build.zig
+  - build.zig.zon
+  - mise.toml
+  - what-changed.yaml
+  - scripts
+  - .githooks
+
+# Extensions left out of the file list entirely, so a documentation-only change runs nothing.
+ignore:
+  - .md
+  - .txt
+  - .log
+
+targets:
+  - name: compile
+    paths:
+      - src
+
+  - name: test
+    paths:
+      - src
+
+  - name: smoke
+    paths:
+      - src
+      - examples

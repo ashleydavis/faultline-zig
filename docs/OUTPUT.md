@@ -1,0 +1,247 @@
+# What Faultline prints
+
+Each example below shows the command and the exit code. `zig build flt` is the step `addFaultTest` adds to your build. These captures show the intended format and are replaced with captures of real output once the tool is built. Progress counts, elapsed time and per-function call counts and timings are left out.
+
+Faultline ends with one number: the percentage of code paths exercised. The exit code is 0 only at 100%.
+
+`<work directory>` stands for the directory in your build's cache where Faultline put everything it generated.
+
+When there are many code paths no call exercised, the report gives the count and the file holding the full list instead of listing them all.
+
+## 100% coverage
+
+Every code path was exercised, so the last line reads 100% and Faultline exits 0.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+  Read 2 source files, with 3 functions to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  format.zig
+    ok   formatFileSize                     9/9 code paths, 120 calls
+
+  Found 2 source files, tested 1, exercised 3 functions and executed 9 of 9 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <work directory>/coverage-report.txt.
+
+
+  Coverage: 9 of 9 code paths, 100%.
+```
+
+Exit code: 0.
+
+## A code path that no call exercised
+
+Faultline found no input value and no value read from a condition in your source that exercises the branch. That is what a scenario is for.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+  Read 2 source files, with 1 function to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  gateway.zig
+    MISS opens                              2/3 code paths
+
+  Found 1 source file, tested 1, exercised 1 function and executed 2 of 3 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <work directory>/coverage-report.txt.
+
+
+  FAIL 1 code path that no call exercised:
+      gateway.zig:18 "if:18:true" in opens: Faultline found no value that exercises this branch.
+
+  One thing to do:
+    Write a scenario exercising the true side of the if at gateway.zig:18 in opens.
+
+  Coverage: 2 of 3 code paths, 66%.
+
+  Failed: 1 code path of 3 was never exercised.
+  The list above says what to do about each one.
+  Took 0s.
+```
+
+Exit code: 1.
+
+## A function that needs a value factory
+
+A parameter whose type holds a function pointer cannot be built from its type, so the function is never called and none of its code paths can run. The line names the function, the type and what to write and that function's own code paths are left off the list: writing the factory is the whole of the work.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+  Read 2 source files, with 2 functions to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  store.zig
+    MISS valueFor                           0/3 code paths, never called
+
+  Found 1 source file, tested 1, exercised 2 functions and executed 1 of 4 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <work directory>/coverage-report.txt.
+
+
+  FAIL 3 code paths that no call exercised:
+      store.zig:15 "valueFor:entered" in valueFor: the function was never called.
+      store.zig:17 "if:17:true" in valueFor: the function was never called.
+      store.zig:20 "if:17:false" in valueFor: the function was never called.
+
+  One thing to do:
+    Write a value factory returning store.Store, which valueFor takes. Without one, valueFor at store.zig:15 cannot be called at all.
+
+  Coverage: 1 of 4 code paths, 25%.
+
+  Failed: 3 code paths of 4 were never exercised.
+  The list above says what to do about each one.
+  Took 0s.
+```
+
+Exit code: 1.
+
+## A module that will not compile
+
+Your code imports a module that your build does not register with `b.addModule`, so Faultline cannot build it. Faultline prints the compiler's own error and what to add to your build.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+Faultline could not compile your code. The compiler said:
+
+uuid.zig:8:25: error: no module named 'shortid' available within module 'root'
+const shortid = @import("shortid");
+
+Supply the module shortid, which the code under test imports and Faultline had no path for. Register it in your build.zig with b.addModule.
+```
+
+Exit code: 1.
+
+## kcov missing
+
+kcov is required. If Faultline cannot find it, it prints one sentence and exits before it runs anything.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+Faultline needs kcov to see which lines ran and could not find it on the PATH. The install instructions are in docs/USER-GUIDE.md, under "Install kcov", or name it with -Dkcov=<path>.
+```
+
+Exit code: 1.
+
+## A scenario whose expectation failed
+
+Faultline says which scenario wrote the expectation, what it expected and the line it is on, then stops.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+  Read 2 source files, with 1 function to exercise.
+The scenario runAddingUpScenario expected the total to be twice the amount it was given, at total.sim.zig:18.
+Reproduce it with: zig build flt -Dreplay="<token>"
+Faultline stopped with ExpectationFailed.
+```
+
+Exit code: 1.
+
+## An expectation function that failed
+
+Faultline says which expectation function failed, after which call or scenario, what it expected and the line, then prints the replay command.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+  Read 2 source files, with 1 function to exercise.
+The expectation function totalIsNeverNegative expected the total to stay at or above zero, at total.sim.zig:9, after the call to addAmount with an allocation failure injected at its first allocation.
+Reproduce it with: zig build flt -Dreplay="<token>"
+Faultline stopped with ExpectationFailed.
+```
+
+Exit code: 1.
+
+## Below 100% coverage
+
+The percentage on the last line is the whole verdict: below a hundred Faultline exits 1, whatever else it printed.
+
+```sh
+$ zig build flt
+```
+
+```
+Fault testing the Zig source in this directory.
+
+  Read 2 source files, with 1 function to exercise.
+  Reading which code paths those calls exercised.
+
+Fault testing
+
+  rounding.zig
+    MISS upTo                               6/7 code paths
+
+  Found 1 source file, tested 1, exercised 1 function and executed 6 of 7 code paths.
+  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Full detail is in <work directory>/coverage-report.txt.
+
+
+  FAIL 1 code path that no call exercised:
+      rounding.zig:23 "if:23:true" in upTo: Faultline found no value that exercises this branch.
+
+  One thing to do:
+    Write a scenario exercising the true side of the if at rounding.zig:23 in upTo.
+
+  Coverage: 6 of 7 code paths, 85%.
+
+  Failed: 1 code path of 7 was never exercised.
+  The list above says what to do about each one.
+  Took 0s.
+```
+
+Exit code: 1.
+
+## Replaying a failure
+
+A replay drives exactly the plan the token holds: the failures it injects and the values it chose.
+
+```sh
+$ zig build flt -Dreplay="<token>"
+```
+
+```
+Fault testing the Zig source in this directory.
+The replay of "<token>" passed.
+```
+
+Exit code: 0.
