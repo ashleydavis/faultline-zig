@@ -443,6 +443,38 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     fi
 fi
 
+# The report does not depend on how many workers run at once: one that passes, one that crashes,
+# one with a scenario and one with two source files each print the same with one worker and four.
+if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
+    SAME_REPORT=1
+    for EXAMPLE in working/02-if-else non-working/36-crash-under-injection working/16-scenario working/45-two-packages; do
+        NAME="${EXAMPLE##*/}"
+        for JOBS in 1 4; do
+            (cd "$REPO_DIR/examples/$EXAMPLE" && NO_COLOR=1 "$ZIG" build flt -Djobs=$JOBS 2>&1 | normalise >"$RESULT_DIR/jobs-$JOBS-$NAME.txt")
+        done
+        if ! cmp -s "$RESULT_DIR/jobs-1-$NAME.txt" "$RESULT_DIR/jobs-4-$NAME.txt"; then
+            SAME_REPORT=0
+            FAILED+=("$EXAMPLE")
+        fi
+    done
+    if [ "$SAME_REPORT" = 1 ]; then
+        printf '  %spass%s  the same report with one worker and with four\n' "$GREEN" "$RESET"
+    else
+        printf '  %sFAIL%s  the same report with one worker and with four\n' "$RED" "$RESET"
+    fi
+
+    JOBS_OUTPUT="$RESULT_DIR/jobs-zero.txt"
+    if (cd "$REPO_DIR/examples/working/01-one-function" && NO_COLOR=1 "$ZIG" build flt -Djobs=0 >"$JOBS_OUTPUT" 2>&1); then
+        printf '  %sFAIL%s  no workers refused\n' "$RED" "$RESET"
+        FAILED+=("working/01-one-function")
+    elif grep -q "^-Djobs is how many workers run at once, so it has to be at least 1\.$" "$JOBS_OUTPUT"; then
+        printf '  %spass%s  no workers refused\n' "$GREEN" "$RESET"
+    else
+        printf '  %sFAIL%s  no workers refused\n' "$RED" "$RESET"
+        FAILED+=("working/01-one-function")
+    fi
+fi
+
 if [ "${#FAILED[@]}" -gt 0 ]; then
     echo "" >&2
     echo "These did not pass. The whole of what each one printed is in its log:" >&2

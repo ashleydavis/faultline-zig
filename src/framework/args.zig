@@ -52,6 +52,13 @@ pub const Args = struct {
 
     // Whether colour is off.
     no_color: bool = false,
+
+    // How many workers run at once, or null for one per processor core.
+    jobs: ?usize = null,
+
+    // The file a worker writes how far it has got to, for the driver to read, instead of printing a
+    // progress line of its own that would overwrite the other workers' lines.
+    progress_file: ?[]const u8 = null,
 };
 
 // What can be wrong with a command line.
@@ -93,6 +100,15 @@ pub fn parse(arguments: []const []const u8) ParseError!Args {
             parsed.result = try valueOf(arguments, &index);
         } else if (std.mem.eql(u8, option, "--exit-file")) {
             parsed.exit_file = try valueOf(arguments, &index);
+        } else if (std.mem.eql(u8, option, "--progress-file")) {
+            parsed.progress_file = try valueOf(arguments, &index);
+        } else if (std.mem.eql(u8, option, "--jobs")) {
+            const text = try valueOf(arguments, &index);
+            const jobs = std.fmt.parseInt(usize, text, 10) catch return error.BadNumber;
+            if (jobs == 0) {
+                return error.BadNumber;
+            }
+            parsed.jobs = jobs;
         } else if (std.mem.eql(u8, option, "--seed")) {
             const text = try valueOf(arguments, &index);
             parsed.seed = std.fmt.parseInt(u64, text, 10) catch return error.BadNumber;

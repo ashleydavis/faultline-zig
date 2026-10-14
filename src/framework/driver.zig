@@ -18,6 +18,7 @@ const project_mod = @import("project.zig");
 const replay_mod = @import("replay.zig");
 const report_mod = @import("report.zig");
 const selection_mod = @import("selection.zig");
+const shards_mod = @import("shards.zig");
 const style_mod = @import("style.zig");
 const worker = @import("worker.zig");
 
@@ -142,6 +143,8 @@ fn runWorker(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, a
     const items = try worker.readWork(allocator, text);
 
     worker.progress_is_watched = std.Io.File.stderr().isTty(io) catch false;
+    worker.progress_file = args.progress_file;
+    worker.progress_io = io;
 
     var results = try worker.run(Subject, allocator, io, .{
         .seed = args.seed orelse 0,
@@ -330,8 +333,10 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     return report(Subject, allocator, io, args, style, selected.items, checklist_files.items.len, checklists.items, standings, failures.items, elapsed.raw.nanoseconds);
 }
 
-// Starts a worker under kcov for one pass, reads what it found and which lines ran, and adds both
-// to what the run has so far.
+// Runs one pass: splits its work into shards (see `shards.zig`), runs a worker under kcov for each,
+// up to `jobs` at once, then reads what each shard found and which lines it ran, in shard order, and
+// adds both to what the run has so far. Reading in shard order and not in the order the workers
+// finish is what keeps the report the same whatever the number of workers.
 fn runPass(
     comptime Subject: type,
     allocator: std.mem.Allocator,
@@ -346,16 +351,122 @@ fn runPass(
     standings: []Standing,
     failures: *std.ArrayList(worker.Failure),
 ) !void {
-    const prefix = try std.fmt.allocPrint(allocator, "{s}/pass{d}", .{ args.kcov_output, pass });
+    const files = try allocator.alloc([]const u8, items.len);
+    defer allocator.free(files);
+    for (items, files) |item, *file| {
+        file.* = fileOfItem(Subject, item);
+    }
+    const split = try shards_mod.split(allocator, items, files);
+    defer shards_mod.free(allocator, split);
+    const jobs = jobsFor(args.jobs, std.Thread.getCpuCount() catch 1, split.len);
+    const is_watched = std.Io.File.stderr().isTty(io) catch false;
+
+    var prefixes = try allocator.alloc([]const u8, split.len);
+    for (prefixes, 0..) |*prefix, number| {
+        prefix.* = try std.fmt.allocPrint(allocator, "{s}/pass{d}.shard{d}", .{ args.kcov_output, pass, number });
+    }
+    const children = try allocator.alloc(?std.process.Child, split.len);
+    defer allocator.free(children);
+    @memset(children, null);
+    // Whatever goes wrong, no worker is left running.
+    defer {
+        for (children) |*slot| {
+            if (slot.*) |*child| {
+                child.kill(io);
+            }
+        }
+    }
+
+    var next: usize = 0;
+    var finished: usize = 0;
+    var running: usize = 0;
+    while (finished < split.len) {
+        while (running < jobs and next < split.len) {
+            children[next] = try startShard(allocator, io, environ_map, args, exe_path, seed, prefixes[next], split[next], is_watched);
+            next += 1;
+            running += 1;
+        }
+        for (children) |*slot| {
+            if (slot.*) |*child| {
+                if (try kcov_run.checkWorker(child)) {
+                    slot.* = null;
+                    running -= 1;
+                    finished += 1;
+                }
+            }
+        }
+        if (is_watched) {
+            printPassProgress(allocator, io, prefixes[0..next], children[0..next]);
+        }
+        if (finished < split.len) {
+            var a_moment: std.os.linux.timespec = .{ .sec = 0, .nsec = worker_check_every_ns };
+            _ = std.os.linux.nanosleep(&a_moment, null);
+        }
+    }
+    if (is_watched) {
+        output_mod.print("", .{});
+    }
+
+    for (prefixes) |prefix| {
+        try mergeShard(allocator, io, args, prefix, checklists, standings, failures);
+    }
+}
+
+// The source file or sim file a work item's calls are of.
+fn fileOfItem(comptime Subject: type, item: worker.WorkItem) []const u8 {
+    // A project with no functions or no scenarios has an empty table, which cannot be indexed.
+    switch (item) {
+        .function => |function| {
+            if (comptime Subject.function_entries.len == 0) {
+                return "";
+            }
+            return Subject.function_entries[function.index].file;
+        },
+        .scenario => |index| {
+            if (comptime Subject.scenario_entries.len == 0) {
+                return "";
+            }
+            return Subject.scenario_entries[index].file;
+        },
+    }
+}
+
+// How often the driver looks for workers that have ended while a pass runs. Short against the
+// time a worker takes, so a free slot is filled soon, and long enough that looking costs nothing.
+const worker_check_every_ns = 50 * std.time.ns_per_ms;
+
+// How many workers a pass runs at once: the number asked for, or one per processor core, and never
+// more than there are shards or fewer than one.
+pub fn jobsFor(asked: ?usize, cores: usize, shard_count: usize) usize {
+    const wanted = asked orelse cores;
+    return @max(1, @min(wanted, shard_count));
+}
+
+// Writes the work of one shard and starts its worker under kcov, with the paths its work, result,
+// coverage and progress go to all starting with `prefix`.
+fn startShard(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
+    args: args_mod.Args,
+    exe_path: []const u8,
+    seed: u64,
+    prefix: []const u8,
+    items: []const worker.WorkItem,
+    is_watched: bool,
+) !std.process.Child {
     const work_path = try std.fmt.allocPrint(allocator, "{s}.work", .{prefix});
     const result_path = try std.fmt.allocPrint(allocator, "{s}.result", .{prefix});
+    const progress_path = try std.fmt.allocPrint(allocator, "{s}.progress", .{prefix});
 
     var work: std.Io.Writer.Allocating = .init(allocator);
     try worker.writeWork(&work.writer, items);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = work_path, .data = work.written() });
+    std.Io.Dir.cwd().deleteFile(io, progress_path) catch {};
 
     const seed_text = try std.fmt.allocPrint(allocator, "{d}", .{seed});
-    const worker_args = [_][]const u8{
+    var worker_args: std.ArrayList([]const u8) = .empty;
+    try worker_args.appendSlice(allocator, &.{
         "--worker",
         "--work",
         work_path,
@@ -365,24 +476,78 @@ fn runPass(
         seed_text,
         "--sources-root",
         args.sources_root,
-    };
+    });
+    if (is_watched) {
+        try worker_args.appendSlice(allocator, &.{ "--progress-file", progress_path });
+    }
     const out_dir = try std.fmt.allocPrint(allocator, "{s}.kcov", .{prefix});
-    try kcov_run.runWorker(allocator, io, .{
+    return kcov_run.startWorker(allocator, io, .{
         .kcov = args.kcov orelse kcov_run.default_kcov,
         .out_dir = out_dir,
         .sources_root = args.sources_root,
         .worker = exe_path,
-        .worker_args = &worker_args,
+        .worker_args = worker_args.items,
         .environ_map = environ_map,
     });
+}
 
+// Prints one progress line for every worker of a pass: the calls all of them have finished, and the
+// file and function of the last running worker that has said where it is.
+fn printPassProgress(allocator: std.mem.Allocator, io: std.Io, prefixes: []const []const u8, children: []const ?std.process.Child) void {
+    var calls: usize = 0;
+    var file: []const u8 = "";
+    var function: []const u8 = "";
+    var buffer: [2048]u8 = undefined;
+    var latest: [1024]u8 = undefined;
+    for (prefixes, children) |prefix, child| {
+        const path = std.fmt.bufPrint(&buffer, "{s}.progress", .{prefix}) catch continue;
+        const text = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024)) catch continue;
+        defer allocator.free(text);
+        const progress = worker.readProgress(text) orelse continue;
+        calls += progress.calls;
+        if (child != null and progress.file.len != 0) {
+            const both = std.fmt.bufPrint(&latest, "{s}\t{s}", .{ progress.file, progress.function }) catch continue;
+            file = both[0..progress.file.len];
+            function = both[progress.file.len + 1 ..];
+        }
+    }
+    if (calls == 0) {
+        return;
+    }
+    output_mod.printProgress("  Exercised {d} call{s}, now in {s} {s}.", .{
+        calls,
+        if (calls == 1) "" else "s",
+        file,
+        function,
+    });
+}
+
+// Reads what the shard whose paths start with `prefix` found and which lines it ran, and adds both
+// to what the run has so far.
+pub fn mergeShard(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    args: args_mod.Args,
+    prefix: []const u8,
+    checklists: []coverage.Checklist,
+    standings: []Standing,
+    failures: *std.ArrayList(worker.Failure),
+) !void {
+    const out_dir = try std.fmt.allocPrint(allocator, "{s}.kcov", .{prefix});
     const coverage_path = try kcov_run.coveragePathOf(allocator, out_dir);
     var covered = try covered_lines.readCobertura(allocator, io, coverage_path);
     defer covered.deinit();
     coverage.tickFromCovered(checklists, &covered, args.sources_root);
 
+    const result_path = try std.fmt.allocPrint(allocator, "{s}.result", .{prefix});
     const result_text = try std.Io.Dir.cwd().readFileAlloc(io, result_path, allocator, .unlimited);
     const results = try worker.readResults(allocator, result_text);
+    try addResults(allocator, results, standings, failures);
+}
+
+// Adds what a worker found to the run's standings and failures. A failure another shard already
+// reported is not added again.
+pub fn addResults(allocator: std.mem.Allocator, results: worker.Results, standings: []Standing, failures: *std.ArrayList(worker.Failure)) !void {
     for (results.tallies) |tally| {
         standings[tally.index].calls += tally.calls;
         standings[tally.index].specifications += tally.specifications;
@@ -402,7 +567,6 @@ fn runPass(
             try failures.append(allocator, failure);
         }
     }
-    _ = Subject;
 }
 
 pub fn readSource(allocator: std.mem.Allocator, io: std.Io, sources_root: []const u8, file: []const u8) ![:0]u8 {

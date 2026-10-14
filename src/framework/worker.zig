@@ -163,7 +163,8 @@ pub fn isProgressDue(now_ns: u64, last_ns: u64) bool {
 }
 
 // Counts one finished call and, when somebody is watching and the last line is old enough, writes
-// the line that says where the run has got to. `file` and `function` are what the call was of.
+// the line that says where the run has got to, or the progress file when there is one. `file` and
+// `function` are what the call was of.
 pub fn reportProgress(file: []const u8, function: []const u8) void {
     progress_calls += 1;
     if (!progress_is_watched) {
@@ -177,6 +178,10 @@ pub fn reportProgress(file: []const u8, function: []const u8) void {
         return;
     }
     progress_last_ns = now;
+    if (progress_file != null) {
+        writeProgress(file, function);
+        return;
+    }
     var buffer: [32]u8 = undefined;
     output_mod.printProgress("  Exercised {d} call{s} in {s}, now in {s} {s}.", .{
         progress_calls,
@@ -185,6 +190,44 @@ pub fn reportProgress(file: []const u8, function: []const u8) void {
         file,
         function,
     });
+}
+
+// Where this worker writes how far it has got, when the driver runs several workers and prints one
+// line for all of them. Null when the worker prints its own line.
+pub var progress_file: ?[]const u8 = null;
+
+// What the progress file is written with. Set with `progress_file`.
+pub var progress_io: std.Io = undefined;
+
+// How far one worker has got, as its progress file says.
+pub const Progress = struct {
+    // How many calls it has finished.
+    calls: usize,
+
+    // The file and the function of the call it finished last.
+    file: []const u8,
+    function: []const u8,
+};
+
+// Writes the progress file: the count of calls, the file and the function, on one line.
+fn writeProgress(file: []const u8, function: []const u8) void {
+    const path = progress_file orelse return;
+    var buffer: [1024]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, "{d}\t{s}\t{s}\n", .{ progress_calls, file, function }) catch return;
+    std.Io.Dir.cwd().writeFile(progress_io, .{ .sub_path = path, .data = text }) catch {};
+}
+
+// Reads what `writeProgress` wrote, or null for text that is not a whole line of it, which is what
+// a reader sees while the file is being written.
+pub fn readProgress(text: []const u8) ?Progress {
+    if (!std.mem.endsWith(u8, text, "\n")) {
+        return null;
+    }
+    var fields = std.mem.splitScalar(u8, text[0 .. text.len - 1], '\t');
+    const calls = std.fmt.parseInt(usize, fields.next() orelse return null, 10) catch return null;
+    const file = fields.next() orelse return null;
+    const function = fields.next() orelse return null;
+    return .{ .calls = calls, .file = file, .function = function };
 }
 
 // Starts the count again, for a worker that is run more than once in one process.
@@ -208,8 +251,15 @@ pub fn run(comptime Subject: type, allocator: std.mem.Allocator, real_io: std.Io
 
     resetProgress();
     // Takes the progress line off the terminal when the work is done, so what the driver prints
-    // next does not land on the end of it.
-    defer output_mod.print("", .{});
+    // next does not land on the end of it. A worker that writes a progress file writes its final
+    // count there instead, so the driver's line counts every call.
+    defer {
+        if (progress_file != null) {
+            writeProgress("", "");
+        } else {
+            output_mod.print("", .{});
+        }
+    }
 
     var resident: Residence = .{
         .runner = .{

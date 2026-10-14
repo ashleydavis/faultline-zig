@@ -186,6 +186,36 @@ test "runWorker fails when a signal ends the worker" {
     }));
 }
 
+// Starts a worker under the kcov script `name` and checks it until it ends, as the driver does.
+fn startAndCheck(script: []const u8) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeScript(tmp.dir, "kcov.sh", script);
+    const kcov = try pathIn(&tmp, "kcov.sh");
+    defer std.testing.allocator.free(kcov);
+    const out_dir = try pathIn(&tmp, "out");
+    defer std.testing.allocator.free(out_dir);
+
+    var child = try kcov_run.startWorker(std.testing.allocator, std.testing.io, .{
+        .kcov = kcov,
+        .out_dir = out_dir,
+        .sources_root = "/nowhere/sources",
+        .worker = "/nowhere/worker",
+    });
+    errdefer child.kill(std.testing.io);
+    while (!try kcov_run.checkWorker(&child)) {
+        var a_moment: std.os.linux.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+        _ = std.os.linux.nanosleep(&a_moment, null);
+    }
+    try std.testing.expect(child.id == null);
+}
+
+test "a worker started without waiting is seen to end cleanly, to fail and to be killed" {
+    try startAndCheck(fake_kcov);
+    try std.testing.expectError(error.WorkerFailed, startAndCheck(failing_kcov));
+    try std.testing.expectError(error.WorkerWasKilled, startAndCheck(killed_kcov));
+}
+
 test "runWorker fails when kcov itself cannot be started" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

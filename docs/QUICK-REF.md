@@ -28,7 +28,7 @@ This adds a step named `flt`. Faultline takes your modules from your build: ever
 
 Use `.exclude` for benchmarks and test harnesses. They are code, so Faultline takes them for source and asks you to cover their code paths too.
 
-Build options: `-Dfile=<path>` and `-Dfunction=<name>` narrow Faultline to one file or one function, `-Dreport=<path>` moves the full checklist, `-Dkcov=<path>` names kcov and `-Dreplay="<token>"` reproduces a failure Faultline already reported.
+Build options: `-Dfile=<path>` and `-Dfunction=<name>` narrow Faultline to one file or one function, `-Dreport=<path>` moves the full checklist, `-Dkcov=<path>` names kcov, `-Dreplay="<token>"` reproduces a failure Faultline already reported and `-Djobs=<n>` sets how many workers run at once (one per processor core by default).
 
 ## 4. Run Faultline
 

@@ -99,6 +99,7 @@ Type these after `zig build flt` on the command line, for example `zig build flt
 - `-Dreport=<path>` moves the full checklist.
 - `-Dkcov=<path>` names kcov.
 - `-Dreplay="<token>"` reproduces a failure Faultline already reported.
+- `-Djobs=<n>` sets how many workers run at once. By default there is one per processor core. The report is the same whatever the number.
 
 ## Step 4: Run Faultline
 

@@ -203,6 +203,13 @@ pub fn addFaultTest(b: *std.Build, options: FaultTestOptions) void {
     if (b.option([]const u8, "replay", "Repeat a failure Faultline already reported")) |token| {
         run.addArgs(&.{ "--replay", token });
     }
+    if (b.option(usize, "jobs", "How many workers run at once, one per processor core by default")) |jobs| {
+        if (jobs == 0) {
+            std.debug.print("-Djobs is how many workers run at once, so it has to be at least 1.\n", .{});
+            std.process.exit(1);
+        }
+        run.addArgs(&.{ "--jobs", b.fmt("{d}", .{jobs}) });
+    }
 
     // The program exits with zero and writes the code it would have exited with to a file, and a
     // step of Faultline's own fails the build from it. A failed run step makes Zig print the whole

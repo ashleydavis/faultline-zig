@@ -25,6 +25,10 @@ Otherwise follow the [kcov installation instructions](https://github.com/SimonKa
 - `bash scripts/smoke.sh` runs smoke tests against all examples.
 - `bash scripts/test-everything.sh` runs all tests in parallel, failing out at the first problem. Only runs tests when appropriate code has changed since the last successful test run.
 
+## How a run is split between workers
+
+Each pass of a run is split into shards, one per source file or sim file, and up to `-Djobs` workers run the shards at once, each under its own kcov with its own work, result, coverage and progress files. A shard never splits a file, so the calls of one function stay in one worker and it reads that file's conditions once. The driver reads what the shards found in shard order, not in the order the workers finish, and the shards do not depend on the number of workers, so the report is the same with one worker or many. Every worker writes how far it has got to a progress file and the driver prints one line for all of them.
+
 ## The pre-commit hook
 
 The repository has a git pre-commit hook in `.githooks/pre-commit`. It runs `bash scripts/test-everything.sh` and refuses the commit if any check fails.

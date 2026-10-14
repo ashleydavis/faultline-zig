@@ -55,6 +55,23 @@ pub const StartupError = error{KcovNotFound};
 // on a non-zero exit and `WorkerWasKilled` on a signal. Spawning and waiting fail with the errors
 // of the standard library, which pass through unchanged.
 pub fn runWorker(allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
+    var child = try startWorker(allocator, io, options);
+    const term = try child.wait(io);
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) {
+                return error.WorkerFailed;
+            }
+        },
+        else => {
+            return error.WorkerWasKilled;
+        },
+    }
+}
+
+// Starts the worker under kcov the way `runWorker` does and returns without waiting for it, so
+// several can run at once. `checkWorker` says when it has ended.
+pub fn startWorker(allocator: std.mem.Allocator, io: std.Io, options: Options) !std.process.Child {
     try std.Io.Dir.cwd().deleteTree(io, options.out_dir);
     try std.Io.Dir.cwd().createDirPath(io, options.out_dir);
 
@@ -71,18 +88,27 @@ pub fn runWorker(allocator: std.mem.Allocator, io: std.Io, options: Options) !vo
     });
     try argv.appendSlice(allocator, options.worker_args);
 
-    var child = try std.process.spawn(io, .{ .argv = argv.items, .environ_map = options.environ_map });
-    const term = try child.wait(io);
-    switch (term) {
-        .exited => |code| {
-            if (code != 0) {
-                return error.WorkerFailed;
-            }
-        },
-        else => {
-            return error.WorkerWasKilled;
-        },
+    return std.process.spawn(io, .{ .argv = argv.items, .environ_map = options.environ_map });
+}
+
+// Whether a worker `startWorker` started has ended, without waiting for it. True once it exited
+// with zero, and then it has been waited for. Fails as `runWorker` does when it ended badly.
+pub fn checkWorker(child: *std.process.Child) RunError!bool {
+    const linux = std.os.linux;
+    const pid = child.id orelse return true;
+    var status: u32 = 0;
+    const waited = linux.wait4(pid, &status, linux.W.NOHANG, null);
+    if (linux.errno(waited) != .SUCCESS or waited == 0) {
+        return false;
     }
+    child.id = null;
+    if (linux.W.IFEXITED(status)) {
+        if (linux.W.EXITSTATUS(status) != 0) {
+            return error.WorkerFailed;
+        }
+        return true;
+    }
+    return error.WorkerWasKilled;
 }
 
 // The argument that restricts kcov's report to the project's own sources. Free with `allocator`.

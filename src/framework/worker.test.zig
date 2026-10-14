@@ -352,3 +352,14 @@ test "a second call inside half a second writes no second line" {
     try std.testing.expectEqual(after_first, buffer.written().len);
     worker.resetProgress();
 }
+
+test "a progress file's line reads back and a half written one does not" {
+    const progress = worker.readProgress("12\tsrc/a.zig\trun\n").?;
+
+    try std.testing.expectEqual(@as(usize, 12), progress.calls);
+    try std.testing.expectEqualStrings("src/a.zig", progress.file);
+    try std.testing.expectEqualStrings("run", progress.function);
+    try std.testing.expectEqual(@as(?worker.Progress, null), worker.readProgress("12\tsrc/a"));
+    try std.testing.expectEqual(@as(?worker.Progress, null), worker.readProgress(""));
+    try std.testing.expectEqual(@as(?worker.Progress, null), worker.readProgress("many\ta\tb\n"));
+}

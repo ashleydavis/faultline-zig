@@ -69,3 +69,23 @@ test "no exit file is named unless one is given" {
 
     try std.testing.expect(parsed.exit_file == null);
 }
+
+test "how many workers run at once is read and is null unless given" {
+    const given = try args.parse(&.{ "--jobs", "4" });
+    const not_given = try args.parse(&.{"--worker"});
+
+    try std.testing.expectEqual(@as(?usize, 4), given.jobs);
+    try std.testing.expectEqual(@as(?usize, null), not_given.jobs);
+}
+
+test "a count of workers that is zero or not a number or missing is refused" {
+    try std.testing.expectError(error.BadNumber, args.parse(&.{ "--jobs", "0" }));
+    try std.testing.expectError(error.BadNumber, args.parse(&.{ "--jobs", "many" }));
+    try std.testing.expectError(error.MissingValue, args.parse(&.{"--jobs"}));
+}
+
+test "the file a worker writes its progress to is read" {
+    const parsed = try args.parse(&.{ "--progress-file", "cache/progress0" });
+
+    try std.testing.expectEqualStrings("cache/progress0", parsed.progress_file.?);
+}

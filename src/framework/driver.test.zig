@@ -177,3 +177,30 @@ test "writeExitFile replaces what an earlier run wrote" {
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("0", text);
 }
+
+test "jobsFor takes the count asked for, or one per core, and never more than the shards or fewer than one" {
+    try std.testing.expectEqual(@as(usize, 4), driver.jobsFor(4, 16, 10));
+    try std.testing.expectEqual(@as(usize, 16), driver.jobsFor(null, 16, 20));
+    try std.testing.expectEqual(@as(usize, 3), driver.jobsFor(null, 16, 3));
+    try std.testing.expectEqual(@as(usize, 1), driver.jobsFor(null, 16, 0));
+}
+
+test "addResults adds the tallies to the standings and a failure two shards both found once" {
+    var first = try worker.readResults(std.testing.allocator, "N\t0\t5\t2\t0\nX\tfunction\t0\tcrash\t6\ttoken\tpanic: boom\t\t\t0\t\n");
+    defer first.deinit();
+    var second = try worker.readResults(std.testing.allocator, "N\t0\t3\t1\t0\nX\tfunction\t0\tcrash\t6\tother\tpanic: boom\t\t\t0\t\n");
+    defer second.deinit();
+    var standings = [_]driver.Standing{ .{}, .{} };
+    var failures: std.ArrayList(worker.Failure) = .empty;
+    defer failures.deinit(std.testing.allocator);
+
+    try driver.addResults(std.testing.allocator, first, &standings, &failures);
+    try driver.addResults(std.testing.allocator, second, &standings, &failures);
+
+    try std.testing.expectEqual(@as(usize, 8), standings[0].calls);
+    try std.testing.expectEqual(@as(usize, 3), standings[0].specifications);
+    try std.testing.expect(standings[0].was_called);
+    try std.testing.expect(!standings[1].was_called);
+    try std.testing.expectEqual(@as(usize, 1), failures.items.len);
+    try std.testing.expectEqualStrings("token", failures.items[0].token);
+}
