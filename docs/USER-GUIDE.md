@@ -109,6 +109,24 @@ zig build flt
 
 Faultline prints a checklist of what you need to do have it exercise every code path. Faultline exits 1 below 100% and 0 at 100%.
 
+### Results kept from earlier runs
+
+Faultline does not execute again code an earlier run already proved and that is unchanged since. It keeps the complete result of every source file and sim file in your build's cache: every call's count, every failure and which code paths were exercised. A later run loads a file's result from the cache when that file, everything it imports, its sim file, every `global.sim.zig` and Faultline itself are all unchanged, and so is every file whose calls exercised its code paths. Every other file is executed, and so is every file whose calls exercised the code paths of a file that is executed. The report is the same as the run that made the result printed, so a run whose results all come from the cache returns in a moment.
+
+The run says how many files' results it loaded, and the block of each source file whose result came from the cache says so in its heading:
+
+```
+  Loaded the results of 2 source files and 1 sim file from the cache. Neither they nor anything they depend on changed since the run that proved them, so they were not executed again.
+
+  src/format.zig (from the cache)
+    ok   formatFileSize                     9/9 code paths, 120 calls
+```
+
+- `zig build flt -- --no-cache` executes every file and keeps no results.
+- `zig build flt clear` throws away every kept result, so the next run executes every file. It runs no fault tests itself.
+- A run narrowed with `-Dfile` or `-Dfunction` neither loads nor keeps results, because it makes fewer calls than a run of the whole project.
+- A file that imports a module a step of your build generates is always executed, because Faultline cannot tell whether that module changed.
+
 ## Step 5: Read the report
 
 The report has a block per file and a line per function:

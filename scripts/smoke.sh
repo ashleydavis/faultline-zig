@@ -224,7 +224,9 @@ run_one() {
     fi
 
     local code
-    ( cd "$directory" && NO_COLOR=1 "$ZIG" build flt "${arguments[@]+"${arguments[@]}"}" ) > "$output.raw" 2>&1
+    # Without the results cache, so every run executes every file and prints what its expected.txt
+    # holds whatever ran before it. The cache has checks of its own below.
+    ( cd "$directory" && NO_COLOR=1 "$ZIG" build flt "${arguments[@]+"${arguments[@]}"}" -- --no-cache ) > "$output.raw" 2>&1
     code="$?"
     normalise < "$output.raw" > "$output"
 
@@ -421,7 +423,7 @@ fi
 # worker rewrites its progress file.
 if [ -z "$ONLY" ] && [ -z "$SHARD" ] && command -v script >/dev/null 2>&1; then
     PTY_OUTPUT="$RESULT_DIR/pty-progress.txt"
-    (cd "$REPO_DIR/examples/working/08-allocator-failure" && NO_COLOR=1 script -qec "$ZIG build flt" "$PTY_OUTPUT" >/dev/null 2>&1)
+    (cd "$REPO_DIR/examples/working/08-allocator-failure" && NO_COLOR=1 script -qec "$ZIG build flt -- --no-cache" "$PTY_OUTPUT" >/dev/null 2>&1)
     COUNTS_GO_DOWN=$(tr '\r' '\n' < "$PTY_OUTPUT" | grep -ao "Exercised [0-9]* call" | awk '$2 < last { down = 1 } { last = $2 } END { print down + 0 }')
     if grep -q "Exercised [0-9]* call" "$PTY_OUTPUT" && grep -q $'\x1b\[2K' "$PTY_OUTPUT" && [ "$COUNTS_GO_DOWN" = "0" ]; then
         printf '  %spass%s  progress line on a terminal\n' "$GREEN" "$RESET"
@@ -452,7 +454,7 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     for EXAMPLE in working/02-if-else non-working/36-crash-under-injection working/16-scenario working/45-two-packages; do
         NAME="${EXAMPLE##*/}"
         for JOBS in 1 4; do
-            (cd "$REPO_DIR/examples/$EXAMPLE" && NO_COLOR=1 "$ZIG" build flt -Djobs=$JOBS 2>&1 | normalise >"$RESULT_DIR/jobs-$JOBS-$NAME.txt")
+            (cd "$REPO_DIR/examples/$EXAMPLE" && NO_COLOR=1 "$ZIG" build flt -Djobs=$JOBS -- --no-cache 2>&1 | normalise >"$RESULT_DIR/jobs-$JOBS-$NAME.txt")
         done
         if ! cmp -s "$RESULT_DIR/jobs-1-$NAME.txt" "$RESULT_DIR/jobs-4-$NAME.txt"; then
             SAME_REPORT=0
@@ -474,6 +476,72 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     else
         printf '  %sFAIL%s  no workers refused\n' "$RED" "$RESET"
         FAILED+=("working/01-one-function")
+    fi
+fi
+
+# Results an earlier run proved are kept in the build's cache, and a file whose code and everything
+# it depends on are unchanged is not executed again. Each check runs on a copy of an example, made
+# beside this script's logs, because one of them changes a file and an example is never changed.
+# Copying only the example's own files leaves the copy's cache behind, which is what the checks use.
+copy_example() {
+    local from="$REPO_DIR/examples/working/$1"
+    local to="$RESULT_DIR/$2"
+    mkdir -p "$to"
+    cp "$from"/*.zig "$from"/build.zig.zon "$to"/
+    echo "$to"
+}
+
+# Takes out of a run's output what the cache adds to it and the time it took, so a run from the
+# cache can be compared with the run that made the cache.
+without_cache_lines() {
+    sed -E -e '/^  Loaded the results of /d' -e 's/ \(from the cache\)$//' -e '/^ +Took [0-9]+(m [0-9]+)?s\.$/d'
+}
+
+if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
+    # Everything from the cache: `lookup.find` is reached only through `caller.zig`, so its code
+    # paths come from another file's result, and the run prints what the run that proved it did.
+    CACHED_DIR="$(copy_example 67-coverage-of-one-run cached-everything)"
+    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt clear >"$RESULT_DIR/cached-clear.txt" 2>&1)
+    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/cached-first.txt" 2>&1)
+    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/cached-second.txt" 2>&1)
+    without_cache_lines < "$RESULT_DIR/cached-first.txt" > "$RESULT_DIR/cached-first.compared"
+    without_cache_lines < "$RESULT_DIR/cached-second.txt" > "$RESULT_DIR/cached-second.compared"
+    if grep -q "^Cleared the results Faultline kept of earlier runs" "$RESULT_DIR/cached-clear.txt" &&
+        ! grep -q "from the cache" "$RESULT_DIR/cached-first.txt" &&
+        grep -q "^  Loaded the results of 2 source files and 1 sim file from the cache\." "$RESULT_DIR/cached-second.txt" &&
+        grep -q "^  caller.zig (from the cache)$" "$RESULT_DIR/cached-second.txt" &&
+        grep -q "^  lookup.zig (from the cache)$" "$RESULT_DIR/cached-second.txt" &&
+        cmp -s "$RESULT_DIR/cached-first.compared" "$RESULT_DIR/cached-second.compared"; then
+        printf '  %spass%s  a run from the cache prints what the run that proved it did\n' "$GREEN" "$RESET"
+    else
+        printf '  %sFAIL%s  a run from the cache prints what the run that proved it did\n' "$RED" "$RESET"
+        FAILED+=("working/67-coverage-of-one-run")
+    fi
+
+    # `--no-cache` executes every file, and `zig build flt clear` makes the next run execute every
+    # file.
+    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt -- --no-cache >"$RESULT_DIR/cached-none.txt" 2>&1)
+    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt clear >/dev/null 2>&1; NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/cached-cleared.txt" 2>&1)
+    if ! grep -q "from the cache" "$RESULT_DIR/cached-none.txt" && ! grep -q "from the cache" "$RESULT_DIR/cached-cleared.txt" &&
+        grep -q "^  Coverage: 4 of 4 code paths" "$RESULT_DIR/cached-none.txt" && grep -q "^  Coverage: 4 of 4 code paths" "$RESULT_DIR/cached-cleared.txt"; then
+        printf '  %spass%s  no results from the cache with --no-cache or after clearing it\n' "$GREEN" "$RESET"
+    else
+        printf '  %sFAIL%s  no results from the cache with --no-cache or after clearing it\n' "$RED" "$RESET"
+        FAILED+=("working/67-coverage-of-one-run")
+    fi
+
+    # A change to one file executes that file again and leaves another file that does not depend
+    # on it to the cache.
+    CHANGED_DIR="$(copy_example 41-individual-file cached-one-changed)"
+    (cd "$CHANGED_DIR" && NO_COLOR=1 "$ZIG" build flt clear >/dev/null 2>&1; NO_COLOR=1 "$ZIG" build flt >/dev/null 2>&1)
+    echo "// A change since the run that kept this file's result." >> "$CHANGED_DIR/pending.zig"
+    (cd "$CHANGED_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/cached-one-changed.txt" 2>&1)
+    if grep -q "^  counting.zig (from the cache)$" "$RESULT_DIR/cached-one-changed.txt" &&
+        grep -q "^  pending.zig$" "$RESULT_DIR/cached-one-changed.txt"; then
+        printf '  %spass%s  a changed file is executed again and an unchanged one is not\n' "$GREEN" "$RESET"
+    else
+        printf '  %sFAIL%s  a changed file is executed again and an unchanged one is not\n' "$RED" "$RESET"
+        FAILED+=("working/41-individual-file")
     fi
 fi
 

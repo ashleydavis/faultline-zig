@@ -17,6 +17,7 @@ const output_mod = @import("output.zig");
 const project_mod = @import("project.zig");
 const replay_mod = @import("replay.zig");
 const report_mod = @import("report.zig");
+const run_cache = @import("run_cache.zig");
 const selection_mod = @import("selection.zig");
 const shards_mod = @import("shards.zig");
 const style_mod = @import("style.zig");
@@ -248,6 +249,18 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     @memset(standings, .{});
     var failures: std.ArrayList(worker.Failure) = .empty;
 
+    // The files whose results an earlier run proved and that have not changed since are not
+    // executed again: their results come from the cache and go into the report as the run that
+    // made them found them.
+    const cache_directory: ?[]const u8 = if (run_cache.isUsed(args)) args.results_cache else null;
+    var cache: run_cache.State = .{};
+    if (cache_directory) |directory| {
+        cache = try run_cache.prepare(Subject, allocator, io, args, directory, checklists.items);
+        try run_cache.load(Subject, allocator, cache, checklists.items, standings, &failures);
+        printLoaded(cache);
+    }
+    var record: run_cache.Record = .{};
+
     try std.Io.Dir.cwd().createDirPath(io, args.kcov_output);
     var progress: RunProgress = .{ .started_at = started_at };
 
@@ -267,8 +280,8 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     defer spec_arena.deinit();
     for (selected.items) |index| {
         const entry = Subject.function_entries[index];
-        totals[index] = if (entry.can_call) (try entry.list_specs(spec_arena.allocator(), io, seed, &.{})).len else 0;
-        done[index] = !entry.can_call;
+        done[index] = !entry.can_call or cache.isLoaded(entry.file);
+        totals[index] = if (done[index]) 0 else (try entry.list_specs(spec_arena.allocator(), io, seed, &.{})).len;
     }
     output_mod.print("  Reading which code paths those calls exercised.\n", .{});
     var round: usize = 1;
@@ -285,7 +298,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         }
         if (round == 1) {
             for (Subject.scenario_entries, 0..) |entry, index| {
-                if (selection.includesScenario(entry.file)) {
+                if (selection.includesScenario(entry.file) and !cache.isLoaded(entry.file)) {
                     try items.append(allocator, .{ .scenario = index });
                 }
             }
@@ -293,7 +306,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         if (items.items.len == 0) {
             break;
         }
-        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, items.items, checklists.items, standings, &failures, &progress);
+        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, items.items, checklists.items, standings, &failures, &progress, &record);
         for (selected.items) |index| {
             if (done[index]) {
                 continue;
@@ -320,7 +333,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     var second: std.ArrayList(worker.WorkItem) = .empty;
     for (selected.items) |index| {
         const entry = Subject.function_entries[index];
-        if (!entry.can_call) {
+        if (!entry.can_call or cache.isLoaded(entry.file)) {
             continue;
         }
         if (hasUntickedPath(checklists.items, entry.file, entry.name)) {
@@ -328,11 +341,19 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         }
     }
     if (second.items.len != 0) {
-        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, second.items, checklists.items, standings, &failures, &progress);
+        try runPass(Subject, allocator, io, &environ_map, args, exe_path, seed, round, second.items, checklists.items, standings, &failures, &progress, &record);
+    }
+
+    // In the order of the tables, and in the order they were found within one function or
+    // scenario, so the report lists them the same way whichever files' results came from the cache.
+    std.sort.block(worker.Failure, failures.items, {}, isFailureBefore);
+
+    if (cache_directory) |directory| {
+        try run_cache.store(Subject, allocator, io, directory, cache, &record, checklists.items);
     }
 
     const elapsed = started_at.durationTo(std.Io.Clock.Timestamp.now(io, .awake));
-    return report(Subject, allocator, io, args, style, selected.items, checklist_files.items.len, checklists.items, standings, failures.items, elapsed.raw.nanoseconds);
+    return report(Subject, allocator, io, args, style, cache, selected.items, checklist_files.items.len, checklists.items, standings, failures.items, elapsed.raw.nanoseconds);
 }
 
 // Runs one pass: splits its work into shards (see `shards.zig`), runs a worker under kcov for each,
@@ -353,6 +374,7 @@ fn runPass(
     standings: []Standing,
     failures: *std.ArrayList(worker.Failure),
     progress: *RunProgress,
+    record: *run_cache.Record,
 ) !void {
     const files = try allocator.alloc([]const u8, items.len);
     defer allocator.free(files);
@@ -418,8 +440,8 @@ fn runPass(
         output_mod.print("", .{});
     }
 
-    for (prefixes) |prefix| {
-        try mergeShard(allocator, io, args, prefix, checklists, standings, failures);
+    for (prefixes, split) |prefix, shard| {
+        try mergeShard(allocator, io, args, prefix, fileOfItem(Subject, shard[0]), checklists, standings, failures, record);
     }
 }
 
@@ -563,16 +585,18 @@ fn printPassProgress(allocator: std.mem.Allocator, io: std.Io, progress: RunProg
     });
 }
 
-// Reads what the shard whose paths start with `prefix` found and which lines it ran, and adds both
-// to what the run has so far.
+// Reads what the shard of `shard_file` whose paths start with `prefix` found and which lines it
+// ran, adds both to what the run has so far and records them for the results cache.
 pub fn mergeShard(
     allocator: std.mem.Allocator,
     io: std.Io,
     args: args_mod.Args,
     prefix: []const u8,
+    shard_file: []const u8,
     checklists: []coverage.Checklist,
     standings: []Standing,
     failures: *std.ArrayList(worker.Failure),
+    record: *run_cache.Record,
 ) !void {
     const out_dir = try std.fmt.allocPrint(allocator, "{s}.kcov", .{prefix});
     const coverage_path = try kcov_run.coveragePathOf(allocator, out_dir);
@@ -584,17 +608,24 @@ pub fn mergeShard(
     const result_text = try std.Io.Dir.cwd().readFileAlloc(io, result_path, allocator, .unlimited);
     const results = try worker.readResults(allocator, result_text);
     try addResults(allocator, results, standings, failures);
+    try record.add(allocator, shard_file, results, &covered, args.sources_root, checklists);
 }
 
 // Adds what a worker found to the run's standings and failures. A failure another shard already
 // reported is not added again.
 pub fn addResults(allocator: std.mem.Allocator, results: worker.Results, standings: []Standing, failures: *std.ArrayList(worker.Failure)) !void {
-    for (results.tallies) |tally| {
+    try addFindings(allocator, results.tallies, results.failures, standings, failures);
+}
+
+// Adds tallies and failures to the run's standings and failures, as `addResults` does, for a caller
+// that holds them without a `Results` around them.
+pub fn addFindings(allocator: std.mem.Allocator, tallies: []const worker.Tally, found: []const worker.Failure, standings: []Standing, failures: *std.ArrayList(worker.Failure)) !void {
+    for (tallies) |tally| {
         standings[tally.index].calls += tally.calls;
         standings[tally.index].specifications += tally.specifications;
         standings[tally.index].was_called = true;
     }
-    for (results.failures) |failure| {
+    for (found) |failure| {
         var seen = false;
         for (failures.items) |earlier| {
             if (earlier.is_scenario == failure.is_scenario and earlier.index == failure.index and
@@ -655,6 +686,30 @@ pub fn hasUntickedPath(checklists: []const coverage.Checklist, file: []const u8,
     return false;
 }
 
+// Says how many files' results came from the cache. Silent when none did.
+fn printLoaded(cache: run_cache.State) void {
+    const counts = cache.loadedCounts();
+    if (counts.sources + counts.simulations == 0) {
+        return;
+    }
+    output_mod.print("  Loaded the results of {d} source file{s} and {d} sim file{s} from the cache. Neither they nor anything they depend on changed since the run that proved them, so they were not executed again.\n", .{
+        counts.sources,
+        plural(counts.sources),
+        counts.simulations,
+        plural(counts.simulations),
+    });
+}
+
+// Whether `left` is listed before `right`: functions before scenarios, each in table order.
+// Failures of the same function or scenario keep the order they were found in, because the sort is
+// stable.
+fn isFailureBefore(_: void, left: worker.Failure, right: worker.Failure) bool {
+    if (left.is_scenario != right.is_scenario) {
+        return !left.is_scenario;
+    }
+    return left.index < right.index;
+}
+
 pub fn plural(count: usize) []const u8 {
     return if (count == 1) "" else "s";
 }
@@ -669,6 +724,7 @@ fn report(
     io: std.Io,
     args: args_mod.Args,
     style: style_mod.Style,
+    cache: run_cache.State,
     selected: []const usize,
     file_count: usize,
     checklists: []coverage.Checklist,
@@ -683,7 +739,11 @@ fn report(
     var exercised_functions: usize = 0;
     for (checklists) |one| {
         if (!std.mem.eql(u8, previous_file, one.file)) {
-            output_mod.print("\n  {s}\n", .{one.file});
+            if (cache.isLoaded(one.file)) {
+                output_mod.print("\n  {s} (from the cache)\n", .{one.file});
+            } else {
+                output_mod.print("\n  {s}\n", .{one.file});
+            }
             previous_file = one.file;
         }
         const ticked = one.tickedCount();

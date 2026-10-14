@@ -694,10 +694,16 @@ pub fn readWork(allocator: std.mem.Allocator, text: []const u8) ![]WorkItem {
 
 // Writes what a worker found as text.
 pub fn writeResults(writer: *std.Io.Writer, results: Results) std.Io.Writer.Error!void {
-    for (results.tallies) |tally| {
+    try writeFindings(writer, results.tallies, results.failures);
+}
+
+// Writes tallies and failures in the form `readResults` reads, for a caller that holds them
+// without a `Results` around them.
+pub fn writeFindings(writer: *std.Io.Writer, tallies: []const Tally, failures: []const Failure) std.Io.Writer.Error!void {
+    for (tallies) |tally| {
         try writer.print("N\t{d}\t{d}\t{d}\t{d}\n", .{ tally.index, tally.calls, tally.specifications, @intFromBool(tally.is_cut_short) });
     }
-    for (results.failures) |failure| {
+    for (failures) |failure| {
         try writer.print("X\t{s}\t{d}\t{s}\t{d}\t", .{
             if (failure.is_scenario) "scenario" else "function",
             failure.index,

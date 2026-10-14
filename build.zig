@@ -2,6 +2,7 @@ const std = @import("std");
 const walk = @import("src/cmd/walk.zig");
 const import_table = @import("src/cmd/import_table.zig");
 const make_public = @import("src/cmd/make_public.zig");
+const module_table = @import("src/cmd/module_table.zig");
 
 // Faultline's build. It declares the modules a project's build uses (`sim`, which a project's sim
 // files import, and `faultline`, which the program built for a project is made of), the step a
@@ -174,6 +175,18 @@ pub fn addFaultTest(b: *std.Build, options: FaultTestOptions) void {
         }
     }
 
+    // Where each module's root file is, so the results kept of a file are thrown away when a
+    // module it imports changes.
+    var table_of_modules: std.ArrayList(module_table.Module) = .empty;
+    for (imports.items) |import| {
+        if (isReserved(import.name)) {
+            continue;
+        }
+        const placed = placeOf(b, import.module) orelse continue;
+        table_of_modules.append(b.allocator, .{ .name = import.name, .place = placed.place, .path = placed.path }) catch @panic("OOM");
+    }
+    _ = written.add(module_table.file_name, module_table.render(b.allocator, table_of_modules.items) catch @panic("OOM"));
+
     const program = b.addExecutable(.{
         .name = "flt-sim",
         // The LLVM backend, because kcov reads the binary's line table through libdw and gets no
@@ -205,6 +218,13 @@ pub fn addFaultTest(b: *std.Build, options: FaultTestOptions) void {
         b.pathJoin(&.{ cache, "faultline-report.txt" });
     run.addArgs(&.{ "--report", report_path });
     run.addArgs(&.{ "--kcov-out", b.pathJoin(&.{ cache, "flt-kcov" }) });
+
+    // The results of earlier runs, so code an earlier run proved and that has not changed since is
+    // not executed again. The salt is what Faultline itself is and how the program is built, so a
+    // change to either throws every kept result away.
+    const results_path = b.pathJoin(&.{ cache, "flt-results" });
+    run.addArgs(&.{ "--results-cache", results_path });
+    run.addArgs(&.{ "--cache-salt", saltOf(b, io, faultline, target, options.optimize) });
     run.addArg("--sources-root");
     run.addDirectoryArg(written.getDirectory());
     if (b.option([]const u8, "kcov", "The kcov binary, when it is not on the PATH")) |named_path| {
@@ -239,7 +259,124 @@ pub fn addFaultTest(b: *std.Build, options: FaultTestOptions) void {
     };
     exit_step.step.dependOn(&run.step);
 
-    b.step("flt", "Fault test every function down every code path").dependOn(&exit_step.step);
+    // What follows `--` on the command line, such as `--no-cache`, goes to the program as it is.
+    if (b.args) |extra| {
+        run.addArgs(extra);
+    }
+
+    // `zig build flt clear` throws away the kept results and runs nothing. Zig reads `clear` as a
+    // second step to run beside `flt`, so `flt` is told to do nothing else when it is there.
+    const clear_step = b.allocator.create(ClearStep) catch @panic("OOM");
+    clear_step.* = .{
+        .step = std.Build.Step.init(.{ .id = .custom, .name = "clear Faultline's cache", .owner = b, .makeFn = ClearStep.make }),
+        .path = results_path,
+    };
+    const flt_step = b.step("flt", "Fault test every function down every code path. `zig build flt clear` throws away the results kept of earlier runs");
+    if (!b.top_level_steps.contains("clear")) {
+        b.step("clear", "With `flt`, throw away the results Faultline kept of earlier runs").dependOn(&clear_step.step);
+    }
+    if (isClearAsked(b, io)) {
+        flt_step.dependOn(&clear_step.step);
+    } else {
+        flt_step.dependOn(&exit_step.step);
+    }
+}
+
+// Whether the command line of this build asks for `flt` and `clear` together. Zig does not hand
+// the build the names of the steps it was asked for, so they are read from the build runner's own
+// command line. Everything after `--` is for the program and is not a step.
+fn isClearAsked(b: *std.Build, io: std.Io) bool {
+    // Read as a stream, because the kernel reports a size of zero for every file under `/proc`.
+    const file = std.Io.Dir.cwd().openFile(io, "/proc/self/cmdline", .{}) catch return false;
+    defer file.close(io);
+    var buffer: [4096]u8 = undefined;
+    var reader = file.readerStreaming(io, &buffer);
+    const text = reader.interface.allocRemaining(b.allocator, .unlimited) catch return false;
+    var has_flt = false;
+    var has_clear = false;
+    var arguments = std.mem.splitScalar(u8, text, 0);
+    while (arguments.next()) |argument| {
+        if (std.mem.eql(u8, argument, "--")) {
+            break;
+        }
+        if (std.mem.eql(u8, argument, "flt")) {
+            has_flt = true;
+        } else if (std.mem.eql(u8, argument, "clear")) {
+            has_clear = true;
+        }
+    }
+    return has_flt and has_clear;
+}
+
+// Throws away the results Faultline kept of earlier runs, so the next run executes every file.
+const ClearStep = struct {
+    step: std.Build.Step,
+
+    // The directory the results are kept in.
+    path: []const u8,
+
+    fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+        const self: *ClearStep = @fieldParentPtr("step", step);
+        std.Io.Dir.cwd().deleteTree(step.owner.graph.io, self.path) catch |err| {
+            return step.fail("Faultline's cache of results could not be cleared: {t}.", .{err});
+        };
+        std.debug.print("Cleared the results Faultline kept of earlier runs, so the next run executes every file.\n", .{});
+    }
+};
+
+// Whether `name` is one of the modules every program is given, whose files are part of Faultline.
+fn isReserved(name: []const u8) bool {
+    return std.mem.eql(u8, name, "sim") or std.mem.eql(u8, name, "faultline");
+}
+
+// Where a module's root file is, for the table of modules, or null for a module with none.
+fn placeOf(b: *std.Build, module: *std.Build.Module) ?struct { place: module_table.Place, path: []const u8 } {
+    const root = module.root_source_file orelse return null;
+    switch (root) {
+        .src_path => |source| {
+            if (source.owner == b) {
+                return .{ .place = .project, .path = source.sub_path };
+            }
+            return .{ .place = .outside, .path = b.pathJoin(&.{ source.owner.build_root.path orelse ".", source.sub_path }) };
+        },
+        .dependency => |dependency| {
+            return .{ .place = .outside, .path = b.pathJoin(&.{ dependency.dependency.builder.build_root.path orelse ".", dependency.sub_path }) };
+        },
+        .cwd_relative => |path| return .{ .place = .outside, .path = path },
+        .generated => return .{ .place = .generated, .path = "" },
+    }
+}
+
+// A hash of Faultline's own source, of the target and of the optimisation the program is built at,
+// as text. Every key of the results cache starts from it.
+fn saltOf(b: *std.Build, io: std.Io, faultline: *std.Build.Dependency, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) []const u8 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(target.result.zigTriple(b.allocator) catch @panic("OOM"));
+    hasher.update(@tagName(optimize));
+
+    const faultline_root = faultline.builder.build_root.path orelse ".";
+    const source_path = b.pathJoin(&.{ faultline_root, "src" });
+    var source = std.Io.Dir.cwd().openDir(io, source_path, .{ .iterate = true }) catch @panic("faultline: its own source cannot be opened");
+    defer source.close(io);
+    var walker = source.walk(b.allocator) catch @panic("OOM");
+    defer walker.deinit();
+    var paths: std.ArrayList([]const u8) = .empty;
+    while (walker.next(io) catch @panic("faultline: its own source cannot be read")) |entry| {
+        if (entry.kind == .file) {
+            paths.append(b.allocator, b.dupe(entry.path)) catch @panic("OOM");
+        }
+    }
+    std.mem.sort([]const u8, paths.items, {}, isPathBefore);
+    for (paths.items) |path| {
+        const contents = source.readFileAlloc(io, path, b.allocator, .unlimited) catch @panic("faultline: its own source cannot be read");
+        hasher.update(path);
+        hasher.update(contents);
+    }
+    return b.fmt("{x}", .{hasher.final()});
+}
+
+fn isPathBefore(_: void, left: []const u8, right: []const u8) bool {
+    return std.mem.lessThan(u8, left, right);
 }
 
 // Fails the build when the program's exit code, written to a file, is not zero. Its one sentence

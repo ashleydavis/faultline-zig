@@ -59,6 +59,16 @@ pub const Args = struct {
     // The file a worker writes how far it has got to, for the driver to read, instead of printing a
     // progress line of its own that would overwrite the other workers' lines.
     progress_file: ?[]const u8 = null,
+
+    // The directory the results of earlier runs are kept in, or null for a run that keeps none.
+    results_cache: ?[]const u8 = null,
+
+    // What the build says about Faultline itself and how the program was built, which goes into
+    // every key of the results cache so a different Faultline never uses another's results.
+    cache_salt: []const u8 = "",
+
+    // Whether to run without the results cache: every file is run and no result is kept.
+    no_cache: bool = false,
 };
 
 // What can be wrong with a command line.
@@ -78,6 +88,12 @@ pub fn parse(arguments: []const []const u8) ParseError!Args {
             parsed.worker = true;
         } else if (std.mem.eql(u8, option, "--no-color")) {
             parsed.no_color = true;
+        } else if (std.mem.eql(u8, option, "--no-cache")) {
+            parsed.no_cache = true;
+        } else if (std.mem.eql(u8, option, "--results-cache")) {
+            parsed.results_cache = try valueOf(arguments, &index);
+        } else if (std.mem.eql(u8, option, "--cache-salt")) {
+            parsed.cache_salt = try valueOf(arguments, &index);
         } else if (std.mem.eql(u8, option, "--repository")) {
             parsed.repository = try valueOf(arguments, &index);
         } else if (std.mem.eql(u8, option, "--report")) {

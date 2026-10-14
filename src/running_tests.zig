@@ -19,5 +19,6 @@ test {
     _ = @import("framework/checklist.zig");
     _ = @import("framework/selection.zig");
     _ = @import("framework/driver.zig");
+    _ = @import("framework/results_cache.zig");
     _ = @import("framework/report.zig");
 }

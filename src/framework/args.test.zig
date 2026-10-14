@@ -9,6 +9,8 @@ test "no arguments gives every default" {
     try std.testing.expect(parsed.replay == null);
     try std.testing.expect(!parsed.worker);
     try std.testing.expect(!parsed.no_color);
+    try std.testing.expect(parsed.results_cache == null);
+    try std.testing.expect(!parsed.no_cache);
 }
 
 test "every option that takes a value is read" {
@@ -24,6 +26,8 @@ test "every option that takes a value is read" {
         "--work",       "work.txt",
         "--result",     "result.txt",
         "--seed",       "42",
+        "--results-cache", "cache",
+        "--cache-salt", "salt",
     });
 
     try std.testing.expectEqualStrings("project", parsed.repository);
@@ -37,13 +41,16 @@ test "every option that takes a value is read" {
     try std.testing.expectEqualStrings("work.txt", parsed.work.?);
     try std.testing.expectEqualStrings("result.txt", parsed.result.?);
     try std.testing.expectEqual(@as(u64, 42), parsed.seed.?);
+    try std.testing.expectEqualStrings("cache", parsed.results_cache.?);
+    try std.testing.expectEqualStrings("salt", parsed.cache_salt);
 }
 
 test "the flags that take no value are read" {
-    const parsed = try args.parse(&.{ "--worker", "--no-color" });
+    const parsed = try args.parse(&.{ "--worker", "--no-color", "--no-cache" });
 
     try std.testing.expect(parsed.worker);
     try std.testing.expect(parsed.no_color);
+    try std.testing.expect(parsed.no_cache);
 }
 
 test "an option that is not known is refused" {

@@ -38,6 +38,8 @@ zig build flt
 
 Faultline exits 1 below 100% coverage and 0 at 100%.
 
+Faultline keeps each file's result in your build's cache and does not execute again code that is unchanged since the run that proved it. The report says which files' results came from the cache. `zig build flt -- --no-cache` executes every file, and `zig build flt clear` throws the kept results away.
+
 ## 5. Read the report
 
 ```

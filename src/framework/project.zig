@@ -76,6 +76,15 @@ pub const FunctionEntry = struct {
     run_here: *const fn (request: call_mod.Request, out: *std.Io.Writer) void,
 };
 
+// A sim file and the source file it belongs to.
+pub const SimulationFile = struct {
+    // The sim file, relative to the project root.
+    path: []const u8,
+
+    // The source file beside it, relative to the project root.
+    source: []const u8,
+};
+
 // One scenario of a sim file.
 pub const ScenarioEntry = struct {
     // The sim file the scenario is in, relative to the project root.
@@ -113,6 +122,15 @@ pub fn Project(comptime files: anytype) type {
             var found: []const []const u8 = &.{};
             for (files.sources) |source| {
                 found = found ++ [1][]const u8{source.path};
+            }
+            break :blk found;
+        };
+
+        // Every sim file in the table, in order, with the source file it belongs to.
+        pub const simulation_files: []const SimulationFile = blk: {
+            var found: []const SimulationFile = &.{};
+            for (files.simulations) |simulation| {
+                found = found ++ [1]SimulationFile{.{ .path = simulation.path, .source = simulation.source }};
             }
             break :blk found;
         };
