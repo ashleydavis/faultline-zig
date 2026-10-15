@@ -40,10 +40,10 @@ pub fn printTimeTaken(nanos: u64) void {
     output_mod.print("{s}", .{line.buffered()});
 }
 
-// Writes the line `printTimeTaken` prints, in the same words as the progress line's running time.
+// Writes the line `printTimeTaken` prints, with milliseconds under a minute.
 pub fn writeTimeTaken(writer: *std.Io.Writer, nanos: u64) std.Io.Writer.Error!void {
     var buffer: [48]u8 = undefined;
-    try writer.print("  Took {s}.\n", .{worker.elapsedText(&buffer, nanos)});
+    try writer.print("  Took {s}.\n", .{worker.runTimeText(&buffer, nanos)});
 }
 
 // Prints how many calls failed, kind by kind, and in how many functions and scenarios, as the

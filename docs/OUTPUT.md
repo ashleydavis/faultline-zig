@@ -20,7 +20,6 @@ $ zig build flt
 Fault testing the Zig source in this directory.
 
   Read 2 source files, with 3 functions to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 
@@ -52,7 +51,6 @@ $ zig build flt
 Fault testing the Zig source in this directory.
 
   Read 2 source files, with 1 function to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 
@@ -93,7 +91,6 @@ $ zig build flt
 Fault testing the Zig source in this directory.
 
   Read 2 source files, with 2 functions to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 
@@ -248,7 +245,6 @@ $ zig build flt
 Fault testing the Zig source in this directory.
 
   Read 2 source files, with 1 function to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 

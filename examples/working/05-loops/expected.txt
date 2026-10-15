@@ -1,7 +1,6 @@
 Fault testing the Zig source in 05-loops.
 
   Read 1 source file, with 3 functions to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 

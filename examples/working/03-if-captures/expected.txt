@@ -1,7 +1,6 @@
 Fault testing the Zig source in 03-if-captures.
 
   Read 1 source file, with 4 functions to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 

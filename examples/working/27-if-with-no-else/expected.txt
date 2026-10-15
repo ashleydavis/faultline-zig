@@ -1,7 +1,6 @@
 Fault testing the Zig source in 27-if-with-no-else.
 
   Read 1 source file, with 2 functions to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 

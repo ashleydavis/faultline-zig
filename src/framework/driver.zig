@@ -317,7 +317,6 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         done[index] = !entry.can_call or cache.isLoaded(entry.file);
         totals[index] = if (done[index]) 0 else (try entry.list_specs(spec_arena.allocator(), io, seed, &.{})).len;
     }
-    output_mod.print("  Reading which code paths those calls exercised.\n", .{});
     var round: usize = 1;
     while (true) : (round += 1) {
         const chunk = roundSize(round);

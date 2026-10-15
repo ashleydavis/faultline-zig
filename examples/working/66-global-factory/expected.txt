@@ -1,7 +1,6 @@
 Fault testing the Zig source in 66-global-factory.
 
   Read 2 source files, with 2 functions to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 

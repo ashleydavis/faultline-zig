@@ -294,19 +294,15 @@ const ElapsedCase = struct {
     text: []const u8,
 };
 
-// Run lengths from no time at all to several hours, with each edge between two forms on both sides.
+// Run lengths from no time at all to several hours as the progress line reads them, with each edge
+// between two forms on both sides.
 const elapsed_cases = [_]ElapsedCase{
-    .{ .nanos = 0, .text = "0ms" },
-    .{ .nanos = 999_999, .text = "0ms" },
-    .{ .nanos = std.time.ns_per_ms, .text = "1ms" },
-    .{ .nanos = 250 * std.time.ns_per_ms, .text = "250ms" },
-    .{ .nanos = 999 * std.time.ns_per_ms, .text = "999ms" },
-    .{ .nanos = std.time.ns_per_s, .text = "1s 0ms" },
-    .{ .nanos = 1500 * std.time.ns_per_ms, .text = "1s 500ms" },
-    .{ .nanos = 49 * std.time.ns_per_s + 120 * std.time.ns_per_ms, .text = "49s 120ms" },
-    .{ .nanos = 59_999 * std.time.ns_per_ms, .text = "59s 999ms" },
+    .{ .nanos = 0, .text = "0s" },
+    .{ .nanos = 999 * std.time.ns_per_ms, .text = "0s" },
+    .{ .nanos = std.time.ns_per_s, .text = "1s" },
+    .{ .nanos = 1500 * std.time.ns_per_ms, .text = "1s" },
+    .{ .nanos = 59_999 * std.time.ns_per_ms, .text = "59s" },
     .{ .nanos = 60 * std.time.ns_per_s, .text = "1m 0s" },
-    .{ .nanos = 109 * std.time.ns_per_s, .text = "1m 49s" },
     .{ .nanos = 134 * std.time.ns_per_s, .text = "2m 14s" },
     .{ .nanos = 3599 * std.time.ns_per_s, .text = "59m 59s" },
     .{ .nanos = 3600 * std.time.ns_per_s, .text = "1h 0m 0s" },
@@ -314,16 +310,45 @@ const elapsed_cases = [_]ElapsedCase{
     .{ .nanos = 100 * std.time.ns_per_hour + 59 * std.time.ns_per_min + 59 * std.time.ns_per_s, .text = "100h 59m 59s" },
 };
 
-test "elapsed time reads in milliseconds, seconds, minutes or hours as its length needs" {
+// The same run lengths and more as the report's time line reads them, milliseconds included under
+// a minute.
+const run_time_cases = [_]ElapsedCase{
+    .{ .nanos = 0, .text = "0ms" },
+    .{ .nanos = 999_999, .text = "0ms" },
+    .{ .nanos = std.time.ns_per_ms, .text = "1ms" },
+    .{ .nanos = 250 * std.time.ns_per_ms, .text = "250ms" },
+    .{ .nanos = 999 * std.time.ns_per_ms, .text = "999ms" },
+    .{ .nanos = std.time.ns_per_s, .text = "1s 0ms" },
+    .{ .nanos = 1500 * std.time.ns_per_ms, .text = "1s 500ms" },
+    .{ .nanos = 7 * std.time.ns_per_s, .text = "7s 0ms" },
+    .{ .nanos = 49 * std.time.ns_per_s + 120 * std.time.ns_per_ms, .text = "49s 120ms" },
+    .{ .nanos = 59_999 * std.time.ns_per_ms, .text = "59s 999ms" },
+    .{ .nanos = 60 * std.time.ns_per_s, .text = "1m 0s" },
+    .{ .nanos = 109 * std.time.ns_per_s, .text = "1m 49s" },
+    .{ .nanos = 3599 * std.time.ns_per_s, .text = "59m 59s" },
+    .{ .nanos = 3600 * std.time.ns_per_s, .text = "1h 0m 0s" },
+    .{ .nanos = 7503 * std.time.ns_per_s, .text = "2h 5m 3s" },
+    .{ .nanos = 100 * std.time.ns_per_hour + 59 * std.time.ns_per_min + 59 * std.time.ns_per_s, .text = "100h 59m 59s" },
+};
+
+test "elapsed time on the progress line reads in whole seconds, minutes or hours, never milliseconds" {
     for (elapsed_cases) |case| {
         var buffer: [48]u8 = undefined;
         try std.testing.expectEqualStrings(case.text, worker.elapsedText(&buffer, case.nanos));
     }
 }
 
-test "elapsed time keeps the milliseconds when the seconds are whole" {
-    var buffer: [48]u8 = undefined;
-    try std.testing.expectEqualStrings("7s 0ms", worker.elapsedText(&buffer, 7 * std.time.ns_per_s));
+test "run time reads in milliseconds under a minute and as elapsed time from a minute up" {
+    for (run_time_cases) |case| {
+        var buffer: [48]u8 = undefined;
+        try std.testing.expectEqualStrings(case.text, worker.runTimeText(&buffer, case.nanos));
+    }
+}
+
+test "run time that does not fit the buffer reads as a while" {
+    var buffer: [1]u8 = undefined;
+
+    try std.testing.expectEqualStrings("a while", worker.runTimeText(&buffer, 5 * std.time.ns_per_s));
 }
 
 test "elapsed time that does not fit the buffer reads as a while" {
@@ -349,7 +374,7 @@ test "a call is counted and says where the run has got to when somebody is watch
 
     worker.reportProgress("src/greeting.zig", "greet");
 
-    try std.testing.expectEqualStrings("  Exercised 1 call in 0ms, now in src/greeting.zig greet.", buffer.written());
+    try std.testing.expectEqualStrings("  Exercised 1 call in 0s, now in src/greeting.zig greet.", buffer.written());
     worker.resetProgress();
 }
 

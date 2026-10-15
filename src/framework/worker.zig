@@ -146,24 +146,36 @@ fn nowNs() u64 {
     return @as(u64, @intCast(now.sec)) * std.time.ns_per_s + @as(u64, @intCast(now.nsec));
 }
 
-// How long the run has been going, as the progress line and the report's last lines read it:
-// "250ms" under a second, "9s 120ms" under a minute, "2m 14s" under an hour and "1h 5m 3s" from
-// an hour up. Each form names the two or three units a person reads a time of that length in, so
-// a short run is not shown as "0s" and a long one is not shown as "125m". The buffer is the
-// caller's, so this allocates nothing on a path that runs twice a second.
+// How long the run has been going, as the progress line reads it: "9s" under a minute, "2m 14s"
+// under an hour and "1h 5m 3s" from an hour up. Whole seconds only, because the line is redrawn
+// twice a second and milliseconds would only flicker. The buffer is the caller's, so this
+// allocates nothing on a path that runs twice a second.
 pub fn elapsedText(buffer: []u8, nanos: u64) []const u8 {
-    const milliseconds = nanos / std.time.ns_per_ms;
     const seconds = nanos / std.time.ns_per_s;
     const minutes = seconds / std.time.s_per_min;
     const hours = seconds / std.time.s_per_hour;
-    const written = if (seconds < 1)
-        std.fmt.bufPrint(buffer, "{d}ms", .{milliseconds})
-    else if (minutes < 1)
-        std.fmt.bufPrint(buffer, "{d}s {d}ms", .{ seconds, milliseconds % std.time.ms_per_s })
+    const written = if (minutes < 1)
+        std.fmt.bufPrint(buffer, "{d}s", .{seconds})
     else if (hours < 1)
         std.fmt.bufPrint(buffer, "{d}m {d}s", .{ minutes, seconds % std.time.s_per_min })
     else
         std.fmt.bufPrint(buffer, "{d}h {d}m {d}s", .{ hours, minutes % 60, seconds % std.time.s_per_min });
+    return written catch "a while";
+}
+
+// How long a finished run took, as the report's last lines read it: "250ms" under a second,
+// "9s 120ms" under a minute, and from a minute up the same as `elapsedText`. A run under a minute
+// keeps its milliseconds so a short run is not shown as "0s".
+pub fn runTimeText(buffer: []u8, nanos: u64) []const u8 {
+    const milliseconds = nanos / std.time.ns_per_ms;
+    const seconds = nanos / std.time.ns_per_s;
+    if (seconds >= std.time.s_per_min) {
+        return elapsedText(buffer, nanos);
+    }
+    const written = if (seconds < 1)
+        std.fmt.bufPrint(buffer, "{d}ms", .{milliseconds})
+    else
+        std.fmt.bufPrint(buffer, "{d}s {d}ms", .{ seconds, milliseconds % std.time.ms_per_s });
     return written catch "a while";
 }
 

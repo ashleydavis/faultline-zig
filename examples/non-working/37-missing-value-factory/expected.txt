@@ -1,7 +1,6 @@
 Fault testing the Zig source in 37-missing-value-factory.
 
   Read 1 source file, with 1 function to exercise.
-  Reading which code paths those calls exercised.
 
 Fault testing
 
