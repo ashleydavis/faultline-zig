@@ -37,6 +37,10 @@ Each pass of a run is split into shards, one per source file or sim file, and up
 
 `src/framework/crash_store.zig` reads and writes `.zig-cache/flt-crashes.txt`, one replay token per line, and the driver passes the path with `--crashes`. Before any call, the driver replays every kept token with `src/framework/replay.zig`, adds each that still fails to the run's failures and drops each that no longer names a call. After the run it writes back the kept tokens followed by the token of every crash the run found, leaving out a token that differs from a kept one only in its seed, unless one of its values (written with `s`) was drawn from that seed. The file is outside `flt-results/`, so `--no-cache` and `zig build flt clear` leave it alone. The smoke tests throw it away before each example so an example prints what its `expected.txt` holds, and check keeping crashes on a copy of `examples/non-working/36-crash-under-injection`.
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push and pull request, on Linux only because Faultline needs kcov and `/proc`. It runs two jobs at once: one runs `zig build` and `zig build test`, and the other builds kcov from its tagged source and runs `bash scripts/smoke.sh`.
+
 ## The pre-commit hook
 
 The repository has a git pre-commit hook in `.githooks/pre-commit`. It runs `bash scripts/test-everything.sh` and refuses the commit if any check fails.

@@ -1,0 +1,74 @@
+#
+# Build, unit-test and smoke-test on every push and pull request.
+#
+# Linux only: Faultline measures coverage with kcov and reads `/proc`, so it runs on Linux and
+# nowhere else. The smoke tests run every example under `examples/` against the tool built from
+# this commit.
+#
+name: CI
+
+env:
+  ZIG_VERSION: "0.16.0"
+  KCOV_VERSION: "v43"
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # The unit tests need no kcov, so they run on a runner of their own while the smoke tests build
+  # kcov and run every example.
+  unit-test:
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: zig build
+        run: zig build
+
+      - name: zig build test
+        run: zig build test --summary all
+
+  smoke-test:
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # Built from its tagged source, so every run uses the same kcov whatever the runner's
+      # package archive holds.
+      - name: Install kcov
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake binutils-dev libssl-dev libcurl4-openssl-dev zlib1g-dev libdw-dev libiberty-dev
+          git clone --branch "$KCOV_VERSION" --depth 1 https://github.com/SimonKagstrom/kcov.git "$RUNNER_TEMP/kcov"
+          cmake -S "$RUNNER_TEMP/kcov" -B "$RUNNER_TEMP/kcov/build"
+          cmake --build "$RUNNER_TEMP/kcov/build" --parallel
+          sudo cmake --install "$RUNNER_TEMP/kcov/build"
+          kcov --version
+
+      - name: Smoke tests
+        run: bash scripts/smoke.sh
