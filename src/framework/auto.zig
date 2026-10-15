@@ -76,7 +76,32 @@ pub fn Context(comptime Locator: type) type {
 // Whether the run supplies this type itself: the allocator the code under test draws from, the `Io`
 // it reads the clock and the network through, the random source and a writer.
 pub fn isSupplied(comptime T: type) bool {
-    return T == std.mem.Allocator or T == std.Io or T == std.Random or T == *std.Io.Writer;
+    return T == std.mem.Allocator or T == std.Io or T == std.Random or T == *std.Io.Writer or T == std.Io.Dir;
+}
+
+// Whether `T` is a list that owns its memory, such as `std.ArrayList(u8)`: a struct with `items`
+// and `capacity` that starts from `empty` and grows with the allocator it is given. Building one
+// field by field would make `items` memory no allocator handed out, and the first append would
+// make the allocator resize memory that is not its own. So one is built from the elements of a
+// slice, appended with the allocator the call is given.
+pub fn isOwnedList(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") {
+        return false;
+    }
+    return @hasField(T, "items") and @hasField(T, "capacity") and @hasDecl(T, "empty") and @hasDecl(T, "appendSlice");
+}
+
+// The slice an owned list's elements are built as.
+fn ElementsOf(comptime T: type) type {
+    return []@typeInfo(@FieldType(T, "items")).pointer.child;
+}
+
+// The files a parameter of type `std.Io.File` is given: the simulated standard input, for code
+// that reads, and standard output, for code that writes. A file made from a number would be a
+// handle the simulated filesystem never gave out, and its reads and writes would go to the real
+// system.
+fn boundaryFile(index: usize) std.Io.File {
+    return if (index % 2 == 0) std.Io.File.stdin() else std.Io.File.stdout();
 }
 
 // Whether a value factory takes over from building this type from its own type. Not for the
@@ -116,8 +141,11 @@ fn Answer(comptime T: type, comptime Locator: type) type {
 }
 
 fn canMakeValueTo(comptime T: type, comptime Locator: type, comptime depth: usize) bool {
-    if (isSupplied(T)) {
+    if (isSupplied(T) or T == std.Io.File) {
         return true;
+    }
+    if (isOwnedList(T)) {
+        return depth > 0 and canMakeValueTo(ElementsOf(T), Locator, depth - 1);
     }
     // A type nothing can be assembled out of can still be obtained by asking the sim file for one:
     // a value whose insides are function pointers is made by whatever makes it and this is how
@@ -179,6 +207,12 @@ fn boundaryCount(comptime T: type, comptime Locator: type, comptime depth: usize
     if (comptime isFactoryFirst(T, Locator)) {
         return Locator.count(T);
     }
+    if (comptime T == std.Io.File) {
+        return 2;
+    }
+    if (comptime isOwnedList(T)) {
+        return sliceBoundaryCount(ElementsOf(T));
+    }
     if (comptime depth == 0) {
         return 1;
     }
@@ -236,7 +270,7 @@ fn sliceBoundaryLength(index: usize) usize {
 // How many values the conditions give for a type. For a type made of others it is as many as its
 // largest part gives and no part giving any gives none.
 fn conditionCount(comptime T: type, comptime Locator: type, ctx: Context(Locator), comptime depth: usize) anyerror!usize {
-    if (comptime isSupplied(T) or isFactoryFirst(T, Locator) or depth == 0) {
+    if (comptime isSupplied(T) or isFactoryFirst(T, Locator) or depth == 0 or T == std.Io.File or isOwnedList(T)) {
         return 0;
     }
     if (comptime candidates.isCandidateType(T)) {
@@ -291,6 +325,9 @@ fn countFrom(comptime T: type, comptime Locator: type, ctx: Context(Locator), so
 fn isSeedVarying(comptime T: type, comptime Locator: type, comptime depth: usize) bool {
     if (comptime isSupplied(T)) {
         return false;
+    }
+    if (comptime T == std.Io.File or isOwnedList(T)) {
+        return true;
     }
     if (comptime isFactoryFirst(T, Locator)) {
         return Locator.count(T) > 1;
@@ -358,6 +395,10 @@ fn supply(comptime T: type, ctx: anytype) T {
     if (T == std.Random) {
         return ctx.random;
     }
+    // The simulated current directory, which every relative path of the call starts from.
+    if (T == std.Io.Dir) {
+        return std.Io.Dir.cwd();
+    }
     return ctx.writer;
 }
 
@@ -409,8 +450,20 @@ fn buildFrom(comptime T: type, comptime Locator: type, ctx: Context(Locator), pi
         const index = if (pick.random) |random| random.uintLessThan(usize, total) else pick.index % total;
         return ctx.locator.make(T, index, Builder(Locator){ .ctx = ctx });
     }
+    if (comptime T == std.Io.File) {
+        if (pick.random) |random| {
+            return boundaryFile(random.int(usize));
+        }
+        return boundaryFile(pick.index);
+    }
     if (comptime depth == 0) {
         return error.ValueTooDeep;
+    }
+    if (comptime isOwnedList(T)) {
+        const elements = try buildSlice(ElementsOf(T), Locator, ctx, pick, depth);
+        var list: T = .empty;
+        try list.appendSlice(ctx.call_allocator, elements);
+        return list;
     }
     if (pick.source == .condition and comptime candidates.isCandidateType(T)) {
         const list = try candidates.candidatesFor(T, ctx.arena, ctx.conditions);

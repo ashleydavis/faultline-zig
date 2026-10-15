@@ -168,6 +168,8 @@ Faultline picks input values from the boundary values of each type (zero, one, m
 
 Faultline calls each function with every combination of the values it has for its parameters: its own values and your value factories alike.
 
+Some parameters get values the way a caller would make them. An allocator, the `std.Io` and the writer are the ones Faultline gives the call. A `std.Io.Dir` is the simulated current directory. A `std.Io.File` is the simulated standard input or standard output. A list that owns its memory, such as `std.ArrayList(u8)`, is built empty, then grown with the allocator Faultline gives the call, so the function can grow it further.
+
 ## Step 6: Write value factories for your own types that Faultline cannot instantiate
 
 Faultline instantiates integers, floats, booleans, enums, optionals, errors, slices, arrays, plain structs, tagged unions and pointers to any of those. It also provides the allocator, `std.Io`, the network, the clock, `std.Random` and a writer. For your own types that it cannot instantiate, you write a value factory.

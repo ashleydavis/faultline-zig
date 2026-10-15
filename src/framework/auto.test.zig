@@ -959,3 +959,40 @@ test "anyerror is offered the supplied error first and then every value factory 
     try auto.buildValueInto(anyerror, WithErrors, ctx, choices[2], &built);
     try std.testing.expectEqual(@as(anyerror, error.AccessDenied), built);
 }
+
+test "an owned list is built from its elements with the allocator the call is given, so the call can grow it" {
+    var h: Plain = undefined;
+    h.start(1);
+    defer h.finish();
+    var ctx = h.context();
+    ctx.call_allocator = std.testing.allocator;
+    const List = std.ArrayList(u8);
+
+    try std.testing.expect(comptime auto.isOwnedList(List));
+    try std.testing.expect(comptime !auto.isOwnedList(struct { items: []u8, capacity: usize }));
+    const choices = try auto.listChoices(List, NoFactories, ctx);
+    try std.testing.expect(choices.len >= 3);
+    for (choices) |choice| {
+        var list = try auto.buildValue(List, NoFactories, ctx, choice);
+        defer list.deinit(std.testing.allocator);
+        const before = list.items.len;
+        try list.append(std.testing.allocator, 'x');
+        try std.testing.expectEqual(before + 1, list.items.len);
+    }
+}
+
+test "a directory is the simulated current directory and a file is standard input or standard output" {
+    var h: Plain = undefined;
+    h.start(1);
+    defer h.finish();
+    const ctx = h.context();
+
+    const directory = try auto.buildValue(std.Io.Dir, NoFactories, ctx, boundaryChoice(0));
+    try std.testing.expectEqual(std.Io.Dir.cwd().handle, directory.handle);
+    try std.testing.expectEqual(@as(usize, 1), (try auto.listChoices(std.Io.Dir, NoFactories, ctx)).len);
+
+    const reading = try auto.buildValue(std.Io.File, NoFactories, ctx, boundaryChoice(0));
+    const writing = try auto.buildValue(std.Io.File, NoFactories, ctx, boundaryChoice(1));
+    try std.testing.expectEqual(std.Io.File.stdin().handle, reading.handle);
+    try std.testing.expectEqual(std.Io.File.stdout().handle, writing.handle);
+}
