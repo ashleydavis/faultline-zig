@@ -50,12 +50,16 @@ Faultline keeps each file's result in your build's cache and does not execute ag
       sizing.zig:9 "if:9:false" in isLarge: Faultline found no value that exercises this branch.
 
   One thing to do:
-    Write a scenario exercising the false side of the if at sizing.zig:9 in isLarge.
+    Write a value factory that reaches the false side of the if at sizing.zig:9 in isLarge, or a scenario that exercises it if no value factory can.
+
+  No call crashed, hung or found an expectation false.
 
   Coverage: 2 of 3 code paths, 66%.
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.
 ```
 
-A function is done when its line reads `ok`, which means every one of its code paths was exercised (the `2/3` in the example is 2 exercised out of 3). Each checklist line carries a file, a line and one thing to do. The report file named on the `Full detail` line lists every code path, exercised or not, every failure and every thing to do, including those the terminal leaves out.
+A function is done when its line reads `ok`, which means every one of its code paths was exercised (the `2/3` in the example is 2 exercised out of 3). Each checklist line carries a file, a line and one thing to do. The report file named on the last line lists every code path, exercised or not, every failure and every thing to do, including those the terminal leaves out.
 
 ## 6. Write value factories for your own types that Faultline cannot instantiate
 

@@ -107,11 +107,11 @@ pub fn phraseFor(buffer: []u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
-// Prints the list, grouped by kind, under a heading saying how many items there are.
-//
-// `report_path` is named on the line that says how many were not printed, so a reader who wants
-// the rest is never told separately where they are.
-pub fn print(items: []const Item, style: Style, report_path: []const u8) void {
+// Prints the list, grouped by kind, under a heading saying how many items there are. A kind with
+// more than one item shown says what to write once, over a short line per item, rather than
+// repeating the same sentence on every line. The line that says how many were not printed does
+// not name the report file: the end of the report names it.
+pub fn print(items: []const Item, style: Style) void {
     if (items.len == 0) {
         return;
     }
@@ -130,25 +130,58 @@ pub fn print(items: []const Item, style: Style, report_path: []const u8) void {
 
     var printed: usize = 0;
     for (kind_order) |kind| {
+        var of_kind: usize = 0;
         for (items) |item| {
-            if (item.kind != kind) {
-                continue;
+            if (item.kind == kind) {
+                of_kind += 1;
             }
-            if (printed == terminal_limit) {
-                continue;
-            }
-            printOne(item, style);
-            printed += 1;
         }
+        const shown = @min(of_kind, terminal_limit - printed);
+        if (shown == 0) {
+            continue;
+        }
+        if (shown > 1) {
+            output_mod.print("    {s}{s}{s}\n", .{ style.dim(), headingFor(kind), style.reset() });
+        }
+        var done: usize = 0;
+        for (items) |item| {
+            if (item.kind != kind or done == shown) {
+                continue;
+            }
+            if (shown == 1) {
+                printOne(item, style);
+            } else {
+                printShort(item, style);
+            }
+            done += 1;
+        }
+        printed += shown;
     }
 
     if (items.len > printed) {
-        output_mod.print("    {s}and {d} more, all of them in {s}.{s}\n", .{
-            style.dim(),
-            items.len - printed,
-            report_path,
-            style.reset(),
-        });
+        output_mod.print("    {s}and {d} more.{s}\n", .{ style.dim(), items.len - printed, style.reset() });
+    }
+}
+
+// What to write for every item of a kind, said once over a list of them.
+fn headingFor(kind: Kind) []const u8 {
+    return switch (kind) {
+        .value_factory => "Each of these types needs a value factory of its own, so the function that takes it can be called:",
+        .generic_function => "Each of these generic functions needs a scenario of its own that calls it, because Faultline cannot work out what their type parameters stand for:",
+        .scenario => "Each of these code paths needs a value factory that reaches it or, where no value factory can, a scenario of its own:",
+    };
+}
+
+// One item under its kind's heading: only what tells it from the others.
+fn printShort(item: Item, style: Style) void {
+    switch (item.kind) {
+        .value_factory => output_mod.print("      {s}{s}, for {s} at {s}:{d}{s}\n", .{ style.dim(), item.type_name, item.function, item.file, item.line, style.reset() }),
+        .generic_function => output_mod.print("      {s}{s} at {s}:{d}{s}\n", .{ style.dim(), item.function, item.file, item.line, style.reset() }),
+        .scenario => {
+            var buffer: [128]u8 = undefined;
+            const phrase = phraseFor(&buffer, item.name) orelse "this code path";
+            output_mod.print("      {s}{s} at {s}:{d} in {s}{s}\n", .{ style.dim(), phrase, item.file, item.line, item.function, style.reset() });
+        },
     }
 }
 
@@ -191,7 +224,7 @@ fn writeSentence(writer: *std.Io.Writer, item: Item) std.Io.Writer.Error!void {
         .scenario => {
             var buffer: [128]u8 = undefined;
             const phrase = phraseFor(&buffer, item.name) orelse "this code path";
-            try writer.print("Write a scenario exercising {s} at {s}:{d} in {s}.", .{ phrase, item.file, item.line, item.function });
+            try writer.print("Write a value factory that reaches {s} at {s}:{d} in {s}, or a scenario that exercises it if no value factory can.", .{ phrase, item.file, item.line, item.function });
         },
     }
 }

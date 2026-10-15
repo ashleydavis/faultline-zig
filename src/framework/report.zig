@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const output_mod = @import("output.zig");
+const style_mod = @import("style.zig");
 const worker = @import("worker.zig");
 
 // Prints one failure. `subject` is what failed: the name of the function or the scenario.
@@ -28,6 +29,71 @@ pub fn printFailure(failure: worker.Failure, subject: []const u8) void {
         },
     }
     printReplay(failure.token);
+}
+
+// Prints how many calls failed, kind by kind, and in how many functions and scenarios, as the
+// summary the report ends with beside the coverage line.
+pub fn printFailureCounts(failures: []const worker.Failure, style: style_mod.Style) void {
+    var buffer: [512]u8 = undefined;
+    var line = std.Io.Writer.fixed(&buffer);
+    writeFailureCounts(&line, failures) catch {};
+    const colour = if (failures.len == 0) style.green() else style.red();
+    output_mod.print("\n{s}{s}{s}{s}", .{ colour, style.bold(), line.buffered(), style.reset() });
+}
+
+// Writes the lines `printFailureCounts` prints: one per kind of failure found, or one saying none
+// was found.
+pub fn writeFailureCounts(writer: *std.Io.Writer, failures: []const worker.Failure) std.Io.Writer.Error!void {
+    if (failures.len == 0) {
+        return writer.writeAll("  No call crashed, hung or found an expectation false.\n");
+    }
+    const kinds = [_]struct { kind: worker.FailureKind, one: []const u8, many: []const u8 }{
+        .{ .kind = .crash, .one = "call crashed", .many = "calls crashed" },
+        .{ .kind = .hang, .one = "call did not return in time", .many = "calls did not return in time" },
+        .{ .kind = .expectation, .one = "expectation was false", .many = "expectations were false" },
+    };
+    for (kinds) |kind| {
+        var count: usize = 0;
+        var functions: usize = 0;
+        var scenarios: usize = 0;
+        for (failures, 0..) |failure, position| {
+            if (failure.kind != kind.kind) {
+                continue;
+            }
+            count += 1;
+            if (!isSeenBefore(failures[0..position], failure)) {
+                if (failure.is_scenario) {
+                    scenarios += 1;
+                } else {
+                    functions += 1;
+                }
+            }
+        }
+        if (count == 0) {
+            continue;
+        }
+        try writer.print("  {d} {s}, in ", .{ count, if (count == 1) kind.one else kind.many });
+        if (functions != 0) {
+            try writer.print("{d} function{s}", .{ functions, if (functions == 1) "" else "s" });
+        }
+        if (functions != 0 and scenarios != 0) {
+            try writer.writeAll(" and ");
+        }
+        if (scenarios != 0) {
+            try writer.print("{d} scenario{s}", .{ scenarios, if (scenarios == 1) "" else "s" });
+        }
+        try writer.writeAll(".\n");
+    }
+}
+
+// Whether a failure of the same kind in the same function or scenario is among `earlier`.
+fn isSeenBefore(earlier: []const worker.Failure, failure: worker.Failure) bool {
+    for (earlier) |other| {
+        if (other.kind == failure.kind and other.is_scenario == failure.is_scenario and other.index == failure.index) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Prints the command that repeats the call a replay token names.

@@ -10,7 +10,10 @@ Fault testing
 
   Found 1 source file, called 1 function and exercised 1 of 1 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <cache>/where-asked.txt.
+
+  No call crashed, hung or found an expectation false.
 
   Coverage: 1 of 1 code paths, 100%.
 
+
+  Every failure and every thing to do is in <cache>/where-asked.txt.

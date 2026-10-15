@@ -147,7 +147,7 @@ test "writeFullReport lists every code path, every failure and every thing to do
     try std.testing.expect(std.mem.indexOf(u8, text, "not exercised a.zig:") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "failed double crash: boom") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "-Dreplay=\"a.zig:double;seed=1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "to do Write a scenario exercising the false side of the if at a.zig:2 in run.\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "to do Write a value factory that reaches the false side of the if at a.zig:2 in run, or a scenario that exercises it if no value factory can.\n") != null);
 }
 
 test "writeExitFile writes the exit code as text" {

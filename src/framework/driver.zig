@@ -25,10 +25,11 @@ const shards_mod = @import("shards.zig");
 const style_mod = @import("style.zig");
 const worker = @import("worker.zig");
 
-// How many failures the terminal gets. The rest are in the report file, which holds every one.
-// Ten for the same reason as the checklist: a project with many defects would otherwise bury the
-// coverage number under pages of them.
-const failure_limit: usize = 10;
+// How many failures the terminal gets. The rest are in the report file, which holds every one. One,
+// because each is shown in full, with its code and its stack trace, and a project with many
+// defects would otherwise bury the summary under pages of them. Fixing the first and running
+// again shows the next.
+const failure_limit: usize = 1;
 
 // What the program exits with. Zero only when every code path was exercised and nothing failed.
 const exit_ok: u8 = 0;
@@ -235,12 +236,6 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
 
     // Which functions are in this run, and the code paths of every function in the files they
     // are in.
-    var selected: std.ArrayList(usize) = .empty;
-    for (Subject.function_entries, 0..) |entry, index| {
-        if (selection.includesFunction(entry.file, entry.name)) {
-            try selected.append(allocator, index);
-        }
-    }
     var checklists: std.ArrayList(coverage.Checklist) = .empty;
     var checklist_files: std.ArrayList([]const u8) = .empty;
     for (Subject.source_files) |file| {
@@ -260,6 +255,16 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
             try checklists.append(allocator, one);
         }
         try checklist_files.append(allocator, file);
+    }
+
+    // A function is taken only when the file's own source declares it. A file can hold a type of
+    // the standard library under a name of its own, such as `const Object = std.ArrayHashMap(...)`,
+    // and that type's methods are listed with the file's functions but are not the project's.
+    var selected: std.ArrayList(usize) = .empty;
+    for (Subject.function_entries, 0..) |entry, index| {
+        if (selection.includesFunction(entry.file, entry.name) and hasChecklist(checklists.items, entry.file, entry.name)) {
+            try selected.append(allocator, index);
+        }
     }
 
     output_mod.print("\n  Read {d} source file{s}, with {d} function{s} to exercise.\n", .{
@@ -704,6 +709,17 @@ pub fn hasUntickedPathOutside(checklists: []const coverage.Checklist, file: []co
     return false;
 }
 
+// Whether `file` declares a function called `name` in its own source: whether it has a checklist.
+pub fn hasChecklist(checklists: []const coverage.Checklist, file: []const u8, name: []const u8) bool {
+    const bare = selection_mod.bareName(name);
+    for (checklists) |one| {
+        if (std.mem.eql(u8, one.file, file) and std.mem.eql(u8, one.function, bare)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Whether the function called `name` in `file` has a code path nothing exercised.
 pub fn hasUntickedPath(checklists: []const coverage.Checklist, file: []const u8, name: []const u8) bool {
     const bare = selection_mod.bareName(name);
@@ -891,6 +907,11 @@ fn report(
         if (entry.can_call) {
             continue;
         }
+        // A function Faultline cannot call whose code paths its callers already exercised needs
+        // nothing more.
+        if (!hasUntickedPath(checklists, entry.file, entry.name)) {
+            continue;
+        }
         try never_called_functions.append(allocator, entry.name);
         const line = firstLineOf(checklists, entry.file, entry.name);
         try items.append(allocator, .{
@@ -910,7 +931,6 @@ fn report(
 
     if (args.report) |report_path| {
         try writeFullReport(Subject, allocator, io, report_path, checklists, failures, items.items);
-        output_mod.print("  Full detail is in {s}.\n", .{report_path});
     }
 
     // Failures come first, because a function that crashed is more urgent than a code path that
@@ -928,16 +948,19 @@ fn report(
             }
             report_mod.printFailure(failure, subjectName(Subject, failure));
         }
-        if (failures.len > shown) {
-            output_mod.print("  and {d} more failures, all of them in the report file.\n", .{failures.len - shown});
-        }
+        // How many more there are is said with the counts at the end of the report.
     }
 
-    checklist_mod.print(items.items, style, args.report orelse "the report file");
+    checklist_mod.print(items.items, style);
+    report_mod.printFailureCounts(failures, style);
     checklist_mod.printCoverage(counts.ticked, counts.total, style);
-
     const seconds: i96 = @divTrunc(elapsed_nanoseconds, std.time.ns_per_s);
     output_mod.print("  Took {d}s.\n", .{seconds});
+    // The one place the path is printed: at the end, where it is read after everything above
+    // points to the report file.
+    if (args.report) |report_path| {
+        output_mod.print("\n  Every failure and every thing to do is in {s}.\n", .{report_path});
+    }
     if (counts.ticked != counts.total or failures.len != 0) {
         return exit_failed;
     }

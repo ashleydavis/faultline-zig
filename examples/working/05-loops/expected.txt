@@ -12,7 +12,10 @@ Fault testing
 
   Found 1 source file, called 3 functions and exercised 7 of 7 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <cache>/faultline-report.txt.
+
+  No call crashed, hung or found an expectation false.
 
   Coverage: 7 of 7 code paths, 100%.
 
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.

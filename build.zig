@@ -220,11 +220,11 @@ pub fn addFaultTest(b: *std.Build, options: FaultTestOptions) void {
     run.addArgs(&.{ "--kcov-out", b.pathJoin(&.{ cache, "flt-kcov" }) });
 
     // The results of earlier runs, so code an earlier run proved and that has not changed since is
-    // not executed again. The salt is what Faultline itself is and how the program is built, so a
-    // change to either throws every kept result away.
+    // not executed again. The salt is which Faultline this is and how the program is built, so a
+    // different Faultline or a different build throws every kept result away.
     const results_path = b.pathJoin(&.{ cache, "flt-results" });
     run.addArgs(&.{ "--results-cache", results_path });
-    run.addArgs(&.{ "--cache-salt", saltOf(b, io, faultline, target, options.optimize) });
+    run.addArgs(&.{ "--cache-salt", saltOf(b, faultline, target, options.optimize) });
     run.addArg("--sources-root");
     run.addDirectoryArg(written.getDirectory());
     if (b.option([]const u8, "kcov", "The kcov binary, when it is not on the PATH")) |named_path| {
@@ -347,36 +347,16 @@ fn placeOf(b: *std.Build, module: *std.Build.Module) ?struct { place: module_tab
     }
 }
 
-// A hash of Faultline's own source, of the target and of the optimisation the program is built at,
-// as text. Every key of the results cache starts from it.
-fn saltOf(b: *std.Build, io: std.Io, faultline: *std.Build.Dependency, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) []const u8 {
-    var hasher = std.hash.Wyhash.init(0);
-    hasher.update(target.result.zigTriple(b.allocator) catch @panic("OOM"));
-    hasher.update(@tagName(optimize));
-
-    const faultline_root = faultline.builder.build_root.path orelse ".";
-    const source_path = b.pathJoin(&.{ faultline_root, "src" });
-    var source = std.Io.Dir.cwd().openDir(io, source_path, .{ .iterate = true }) catch @panic("faultline: its own source cannot be opened");
-    defer source.close(io);
-    var walker = source.walk(b.allocator) catch @panic("OOM");
-    defer walker.deinit();
-    var paths: std.ArrayList([]const u8) = .empty;
-    while (walker.next(io) catch @panic("faultline: its own source cannot be read")) |entry| {
-        if (entry.kind == .file) {
-            paths.append(b.allocator, b.dupe(entry.path)) catch @panic("OOM");
-        }
-    }
-    std.mem.sort([]const u8, paths.items, {}, isPathBefore);
-    for (paths.items) |path| {
-        const contents = source.readFileAlloc(io, path, b.allocator, .unlimited) catch @panic("faultline: its own source cannot be read");
-        hasher.update(path);
-        hasher.update(contents);
-    }
-    return b.fmt("{x}", .{hasher.final()});
-}
-
-fn isPathBefore(_: void, left: []const u8, right: []const u8) bool {
-    return std.mem.lessThan(u8, left, right);
+// What tells one Faultline apart from another, with the target and the optimisation the program is
+// built at, as text. Every key of the results cache starts from it. For a fetched Faultline it is
+// the directory Zig keeps the package in, whose name Zig makes from a hash of the package's
+// contents, so a new version or any change to a published one throws every kept result away. Read
+// from a path Zig already knows, it costs a run nothing. A Faultline used from a local path keeps
+// one directory however it is edited, so after an edit `zig build flt clear` throws the results
+// away.
+fn saltOf(b: *std.Build, faultline: *std.Build.Dependency, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) []const u8 {
+    const triple = target.result.zigTriple(b.allocator) catch @panic("OOM");
+    return b.fmt("{s}|{s}|{t}", .{ faultline.builder.build_root.path orelse ".", triple, optimize });
 }
 
 // Fails the build when the program's exit code, written to a file, is not zero. Faultline's report

@@ -124,6 +124,7 @@ The run says how many files' results it loaded, and the block of each source fil
 
 - `zig build flt -- --no-cache` executes every file and keeps no results.
 - `zig build flt clear` throws away every kept result, so the next run executes every file. It runs no fault tests itself.
+- A new version of Faultline executes every file on its first run, because the results kept by the version before it are not used.
 - A run narrowed with `-Dfile` or `-Dfunction` neither loads nor keeps results, because it makes fewer calls than a run of the whole project.
 - A file that imports a module a step of your build generates is always executed, because Faultline cannot tell whether that module changed.
 
@@ -145,7 +146,7 @@ For each code path that was not exercised, the report says what to do:
       sizing.zig:9 "if:9:false" in isLarge: Faultline found no value that exercises this branch.
 
   One thing to do:
-    Write a scenario exercising the false side of the if at sizing.zig:9 in isLarge.
+    Write a value factory that reaches the false side of the if at sizing.zig:9 in isLarge, or a scenario that exercises it if no value factory can.
 ```
 
 ## How Faultline chooses what to call

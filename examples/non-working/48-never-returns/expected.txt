@@ -10,10 +10,13 @@ Fault testing
 
   Found 1 source file, called 1 function and exercised 2 of 2 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <cache>/faultline-report.txt.
 
 The call to stepsToOne did not return in time.
 Reproduce it with: zig build flt -Dreplay="spin.zig:stepsToOne;seed=<seed>;values=b0"
 
+  1 call did not return in time, in 1 function.
+
   Coverage: 2 of 2 code paths, 100%.
 
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.

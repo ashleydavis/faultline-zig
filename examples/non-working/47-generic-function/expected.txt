@@ -10,10 +10,13 @@ Fault testing
 
   Found 1 source file, called 0 functions and exercised 0 of 3 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <cache>/faultline-report.txt.
 
   One thing to do:
     Write a scenario that calls first at lists.zig:4. It is generic, so Faultline cannot work out what its type parameters stand for.
 
+  No call crashed, hung or found an expectation false.
+
   Coverage: 0 of 3 code paths, 0%.
 
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.

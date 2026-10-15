@@ -29,10 +29,13 @@ Fault testing
 
   Found 2 source files, tested 1, exercised 3 functions and executed 9 of 9 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <work directory>/coverage-report.txt.
 
+
+  No call crashed, hung or found an expectation false.
 
   Coverage: 9 of 9 code paths, 100%.
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.
 ```
 
 Exit code: 0.
@@ -58,20 +61,22 @@ Fault testing
 
   Found 1 source file, tested 1, exercised 1 function and executed 2 of 3 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <work directory>/coverage-report.txt.
 
 
   FAIL 1 code path that no call exercised:
       gateway.zig:18 "if:18:true" in opens: Faultline found no value that exercises this branch.
 
   One thing to do:
-    Write a scenario exercising the true side of the if at gateway.zig:18 in opens.
+    Write a value factory that reaches the true side of the if at gateway.zig:18 in opens, or a scenario that exercises it if no value factory can.
+
+  No call crashed, hung or found an expectation false.
 
   Coverage: 2 of 3 code paths, 66%.
-
   Failed: 1 code path of 3 was never exercised.
   The list above says what to do about each one.
   Took 0s.
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.
 ```
 
 Exit code: 1.
@@ -97,7 +102,6 @@ Fault testing
 
   Found 1 source file, tested 1, exercised 2 functions and executed 1 of 4 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <work directory>/coverage-report.txt.
 
 
   FAIL 3 code paths that no call exercised:
@@ -108,11 +112,14 @@ Fault testing
   One thing to do:
     Write a value factory returning store.Store, which valueFor takes. Without one, valueFor at store.zig:15 cannot be called at all.
 
-  Coverage: 1 of 4 code paths, 25%.
+  No call crashed, hung or found an expectation false.
 
+  Coverage: 1 of 4 code paths, 25%.
   Failed: 3 code paths of 4 were never exercised.
   The list above says what to do about each one.
   Took 0s.
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.
 ```
 
 Exit code: 1.
@@ -250,20 +257,22 @@ Fault testing
 
   Found 1 source file, tested 1, exercised 1 function and executed 6 of 7 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <work directory>/coverage-report.txt.
 
 
   FAIL 1 code path that no call exercised:
       rounding.zig:23 "if:23:true" in upTo: Faultline found no value that exercises this branch.
 
   One thing to do:
-    Write a scenario exercising the true side of the if at rounding.zig:23 in upTo.
+    Write a value factory that reaches the true side of the if at rounding.zig:23 in upTo, or a scenario that exercises it if no value factory can.
+
+  No call crashed, hung or found an expectation false.
 
   Coverage: 6 of 7 code paths, 85%.
-
   Failed: 1 code path of 7 was never exercised.
   The list above says what to do about each one.
   Took 0s.
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.
 ```
 
 Exit code: 1.

@@ -2,14 +2,14 @@ const std = @import("std");
 const checklist = @import("checklist.zig");
 const output_mod = @import("output.zig");
 
-fn printed(allocator: std.mem.Allocator, items: []const checklist.Item, report_path: []const u8) ![]u8 {
+fn printed(allocator: std.mem.Allocator, items: []const checklist.Item) ![]u8 {
     var captured: std.Io.Writer.Allocating = .init(allocator);
     defer captured.deinit();
 
     output_mod.writer = &captured.writer;
     defer output_mod.writer = null;
 
-    checklist.print(items, .init(false), report_path);
+    checklist.print(items, .init(false));
     return allocator.dupe(u8, captured.written());
 }
 
@@ -41,7 +41,7 @@ test "phraseFor names each kind of code path in words" {
 }
 
 test "an empty list prints nothing" {
-    const text = try printed(std.testing.allocator, &.{}, "full.txt");
+    const text = try printed(std.testing.allocator, &.{});
     defer std.testing.allocator.free(text);
 
     try std.testing.expectEqualStrings("", text);
@@ -49,16 +49,16 @@ test "an empty list prints nothing" {
 
 test "a scenario item says what to write and where" {
     const items = [_]checklist.Item{.{ .kind = .scenario, .name = "if:9:false", .file = "sizing.zig", .line = 9, .function = "isLarge" }};
-    const text = try printed(std.testing.allocator, &items, "full.txt");
+    const text = try printed(std.testing.allocator, &items);
     defer std.testing.allocator.free(text);
 
     try std.testing.expect(std.mem.indexOf(u8, text, "One thing to do:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "Write a scenario exercising the false side of the if at sizing.zig:9 in isLarge.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Write a value factory that reaches the false side of the if at sizing.zig:9 in isLarge, or a scenario that exercises it if no value factory can.") != null);
 }
 
 test "a value factory item names the type and the function that takes it" {
     const items = [_]checklist.Item{.{ .kind = .value_factory, .type_name = "store.Store", .file = "store.zig", .line = 15, .function = "valueFor" }};
-    const text = try printed(std.testing.allocator, &items, "full.txt");
+    const text = try printed(std.testing.allocator, &items);
     defer std.testing.allocator.free(text);
 
     try std.testing.expect(std.mem.indexOf(u8, text, "Write a value factory returning store.Store, which valueFor takes. Without one, valueFor at store.zig:15 cannot be called at all.") != null);
@@ -69,7 +69,7 @@ test "value factory items are printed before scenario items" {
         .{ .kind = .scenario, .name = "if:9:false", .file = "a.zig", .line = 9, .function = "first" },
         .{ .kind = .value_factory, .type_name = "T", .file = "b.zig", .line = 3, .function = "second" },
     };
-    const text = try printed(std.testing.allocator, &items, "full.txt");
+    const text = try printed(std.testing.allocator, &items);
     defer std.testing.allocator.free(text);
 
     const factory_at = std.mem.indexOf(u8, text, "value factory").?;
@@ -77,15 +77,15 @@ test "value factory items are printed before scenario items" {
     try std.testing.expect(factory_at < scenario_at);
 }
 
-test "a list longer than the terminal limit says how many are in the report file" {
+test "a list longer than the terminal limit says how many more there are" {
     var items: [checklist.terminal_limit + 3]checklist.Item = undefined;
     for (&items) |*item| {
         item.* = .{ .kind = .scenario, .name = "if:9:true", .file = "a.zig", .line = 9, .function = "f" };
     }
-    const text = try printed(std.testing.allocator, &items, "full.txt");
+    const text = try printed(std.testing.allocator, &items);
     defer std.testing.allocator.free(text);
 
-    try std.testing.expect(std.mem.indexOf(u8, text, "and 3 more, all of them in full.txt.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "    and 3 more.\n") != null);
 }
 
 test "the coverage line gives the counts and the percentage" {
@@ -101,7 +101,7 @@ test "the coverage line gives the counts and the percentage" {
 
 test "a generic function item asks for a scenario that calls it" {
     const items = [_]checklist.Item{.{ .kind = .generic_function, .file = "lists.zig", .line = 4, .function = "first" }};
-    const text = try printed(std.testing.allocator, &items, "full.txt");
+    const text = try printed(std.testing.allocator, &items);
     defer std.testing.allocator.free(text);
 
     try std.testing.expect(std.mem.indexOf(u8, text, "Write a scenario that calls first at lists.zig:4. It is generic, so Faultline cannot work out what its type parameters stand for.") != null);
@@ -120,5 +120,19 @@ test "writeAll writes every item, past the terminal limit, one line each in the 
 
     try std.testing.expectEqual(items.len, std.mem.count(u8, written.written(), "\n"));
     try std.testing.expect(std.mem.startsWith(u8, written.written(), "to do Write a value factory returning T, which second takes."));
-    try std.testing.expect(std.mem.indexOf(u8, written.written(), "to do Write a scenario exercising the false side of the if at a.zig:11 in run.\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written.written(), "to do Write a value factory that reaches the false side of the if at a.zig:11 in run, or a scenario that exercises it if no value factory can.\n") != null);
+}
+
+test "several items of a kind say what to write once, over a short line each" {
+    const items = [_]checklist.Item{
+        .{ .kind = .generic_function, .file = "a.zig", .line = 3, .function = "line" },
+        .{ .kind = .generic_function, .file = "a.zig", .line = 9, .function = "write" },
+        .{ .kind = .scenario, .name = "if:9:true", .file = "b.zig", .line = 9, .function = "f" },
+    };
+    const text = try printed(std.testing.allocator, &items);
+    defer std.testing.allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "    Each of these generic functions needs a scenario of its own that calls it, because Faultline cannot work out what their type parameters stand for:\n      line at a.zig:3\n      write at a.zig:9\n") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "type parameters"));
+    try std.testing.expect(std.mem.indexOf(u8, text, "    Write a value factory that reaches the true side of the if at b.zig:9 in f, or a scenario that exercises it if no value factory can.\n") != null);
 }

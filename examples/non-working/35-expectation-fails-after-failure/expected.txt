@@ -10,10 +10,13 @@ Fault testing
 
   Found 1 source file, called 1 function and exercised 1 of 1 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
-  Full detail is in <cache>/faultline-report.txt.
 
 The expectation function aNoteEndsItsLastLine expected the last line of the note to end with a newline, at notes.sim.zig:12, after the call to save.
 Reproduce it with: zig build flt -Dreplay="notes.zig:save;seed=<seed>;values=b0,b1;fail=file_state#1/another_process_holds_a_lock_on_the_range"
 
+  1 expectation was false, in 1 function.
+
   Coverage: 1 of 1 code paths, 100%.
 
+
+  Every failure and every thing to do is in <cache>/faultline-report.txt.
