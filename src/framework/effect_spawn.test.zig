@@ -193,3 +193,18 @@ test "reset starts the identifiers again" {
     try testing.expectEqual(id, second.id.?);
     second.kill(world.io);
 }
+
+test "a child spawned with pipes has them, and waiting for it closes and forgets them" {
+    var world: World = undefined;
+    world.start(&.{});
+    defer world.stop();
+
+    var child = try std.process.spawn(world.io, .{ .argv = &argv, .stdout = .pipe, .stderr = .pipe });
+    try testing.expect(child.stdout != null);
+    try testing.expect(child.stderr != null);
+    try testing.expect(child.stdin == null);
+    _ = try child.wait(world.io);
+
+    try testing.expect(child.stdout == null);
+    try testing.expect(child.stderr == null);
+}

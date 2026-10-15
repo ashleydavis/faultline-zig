@@ -6,15 +6,15 @@
 // - starting the program (`processSpawn` and `processSpawnPath`): not found, access denied, not an
 //   executable, too many open files, out of memory.
 // - waiting for it (`childWait`): exits with a non-zero code, killed by a signal.
-// - collecting its output and waiting within a time limit, which `std.process.run` does by reading
-//   the child's pipes: output past the limit, timed out. Those pipes are files and files belong
-//   to the filesystem part of the world, so `std.process.run` itself reaches only the first two
-//   calls. `run` in this file is the same call made without pipes and is what asks about the
-//   output.
+// - collecting its output and waiting within a time limit: output past the limit, timed out. The
+//   child's pipes are empty files of the simulated filesystem, so `std.process.run` reads them
+//   to their end at once. `run` in this file is the same call made without pipes and is what asks
+//   about the output.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const state = @import("effect_state.zig");
+const filesystem = @import("filesystem.zig");
 
 // The process identifier the next spawned child gets. Starts at `state.first_handle` so it is never
 // the identifier of a real process and counts up so two children differ.
@@ -71,16 +71,22 @@ fn spawn(_: ?*anyopaque, options: std.process.SpawnOptions) std.process.SpawnErr
         return error.OutOfMemory;
     }
     next_id += 1;
-    // The streams are null even when `.pipe` was asked for: a pipe is a file and files are the
-    // filesystem's. Code that reads them must use `run` in this file or expect a null stream.
+    // A stream asked for as `.pipe` is an empty pipe of the simulated filesystem, so the code that
+    // reads the child's output, `std.process.run` among it, reads its end at once, as it would read
+    // a child that wrote nothing.
     return .{
         .id = next_id,
         .thread_handle = if (builtin.os.tag == .windows) undefined else {},
         .stdin = null,
-        .stdout = null,
-        .stderr = null,
+        .stdout = if (options.stdout == .pipe) try pipeFor() else null,
+        .stderr = if (options.stderr == .pipe) try pipeFor() else null,
         .request_resource_usage_statistics = options.request_resource_usage_statistics,
     };
+}
+
+// An empty pipe for a child's stream, or the error a spawn returns when there is no memory for it.
+fn pipeFor() std.process.SpawnError!std.Io.File {
+    return filesystem.openEmptyPipe() catch error.OutOfMemory;
 }
 
 fn spawnPath(userdata: ?*anyopaque, _: std.Io.Dir, options: std.process.SpawnOptions) std.process.SpawnError!std.process.Child {
@@ -92,6 +98,7 @@ fn wait(userdata: ?*anyopaque, child: *std.process.Child) std.process.Child.Wait
         return state.underneath.vtable.childWait(userdata, child);
     }
     child.id = null;
+    closeStreams(child);
     if (state.ask(.spawn, &wait_kinds)) |kind| {
         if (state.isKind(.spawn, "exits_with_a_non_zero_code", kind)) {
             return .{ .exited = failure_exit_code };
@@ -106,6 +113,18 @@ fn kill(userdata: ?*anyopaque, child: *std.process.Child) void {
         return state.underneath.vtable.childKill(userdata, child);
     }
     child.id = null;
+    closeStreams(child);
+}
+
+// Closes a finished child's pipes and forgets them, as the real wait and kill do, because the code
+// that started the child expects them gone once it has ended.
+fn closeStreams(child: *std.process.Child) void {
+    inline for (.{ &child.stdin, &child.stdout, &child.stderr }) |stream| {
+        if (stream.*) |file| {
+            filesystem.closeFile(file);
+            stream.* = null;
+        }
+    }
 }
 
 // The same call as `std.process.run` for the simulated world: starts the program, collects its

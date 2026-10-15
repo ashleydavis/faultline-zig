@@ -90,3 +90,17 @@ test "a session's writer accepts bytes and keeps them" {
 
     try std.testing.expectEqualStrings("abc", session.writer.written());
 }
+
+test "std.process.run in a session reads the started program's empty output to its end and returns code 0" {
+    var session: session_mod.Session = .{ .injector = undefined };
+    try session.begin(std.testing.allocator, std.testing.io, &.{}, 1);
+    defer session.end();
+
+    const result = try std.process.run(std.testing.allocator, session.io, .{ .argv = &.{ "git", "status" } });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try std.testing.expectEqual(@as(u8, 0), result.term.exited);
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), result.stderr.len);
+}

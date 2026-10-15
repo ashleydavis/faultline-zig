@@ -173,6 +173,8 @@ A file named with no `/` in it is never made to fail with "not a directory": it 
 | Output past the limit | `error.StreamTooLong` |
 | Timed out | `error.Timeout` |
 
+When the code under test runs another program, Faultline does not run it, so a fault test never changes anything outside the simulated world. The call gets a stand-in for the program that prints nothing and exits with code 0, unless one of the failures above is injected. When the code asks for the program's output through a pipe, as `std.process.run` does, it gets an empty pipe, so reading the output ends at once with nothing read. Reading that pipe can fail in the ways reading any file can.
+
 ## Environment variables
 
 | Failure | What the call returns |

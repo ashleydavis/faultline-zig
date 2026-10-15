@@ -179,6 +179,13 @@ pub fn install(io: std.Io, room: *std.Io.VTable, injector: *injector_mod.Injecto
     // Only the two file operations are answered here and the rest go underneath.
     room.operate = operate;
 
+    // A batch of operations, which is how `std.process.run` reads a child's two pipes at once. The
+    // operations are made one after another through `operate`, because a simulated file never has
+    // to wait for anything and a batch made underneath would read the simulated handles as real
+    // ones.
+    room.batchAwaitAsync = awaitBatchAsync;
+    room.batchAwaitConcurrent = awaitBatchConcurrent;
+
     return .{ .userdata = io.userdata, .vtable = room };
 }
 
@@ -2087,6 +2094,47 @@ fn operate(userdata: ?*anyopaque, operation: std.Io.Operation) std.Io.Cancelable
             return underneath.vtable.operate(userdata, operation);
         },
     }
+}
+
+// Makes every submitted operation of `batch`, in the order submitted, and moves each to the
+// completed list with its result.
+fn runBatch(userdata: ?*anyopaque, batch: *std.Io.Batch) std.Io.Cancelable!void {
+    var index = batch.submitted.head;
+    while (index != .none) {
+        const storage = &batch.storage[index.toIndex()];
+        const next_index = storage.submission.node.next;
+        const result = try operate(userdata, storage.submission.operation);
+        storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
+        switch (batch.completed.tail) {
+            .none => batch.completed.head = index,
+            else => |tail| batch.storage[tail.toIndex()].completion.node.next = index,
+        }
+        batch.completed.tail = index;
+        index = next_index;
+    }
+    batch.submitted = .empty;
+}
+
+fn awaitBatchAsync(userdata: ?*anyopaque, batch: *std.Io.Batch) std.Io.Cancelable!void {
+    return runBatch(userdata, batch);
+}
+
+fn awaitBatchConcurrent(userdata: ?*anyopaque, batch: *std.Io.Batch, _: std.Io.Timeout) std.Io.Batch.AwaitConcurrentError!void {
+    return runBatch(userdata, batch);
+}
+
+// Closes a file this filesystem gave out, as `fileClose` does, for a caller that has no `Io` to
+// close it through.
+pub fn closeFile(file: File) void {
+    closeFiles(null, &.{file});
+}
+
+// The read end of a pipe nothing ever writes to, open for reading: what a simulated child's
+// output is. A read of it ends at once, as a real pipe's does once the child has exited.
+pub fn openEmptyPipe() std.mem.Allocator.Error!File {
+    prepare();
+    const node = try tree.newNode(.named_pipe, 0o600);
+    return .{ .handle = try newHandle(node, true, false), .flags = .{ .nonblocking = false } };
 }
 
 // Helpers for a scenario or an expectation function. They build and inspect the tree directly: they
