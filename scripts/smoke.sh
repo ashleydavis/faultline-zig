@@ -20,7 +20,6 @@
 # Usage:
 #   bash scripts/smoke.sh                  # every example
 #   bash scripts/smoke.sh 01-one-function  # one of them, while it is being worked on
-#   bash scripts/smoke.sh --update         # rewrite every expected.txt from what the tool printed
 #   bash scripts/smoke.sh --parallel 1         # one after another, for a run that has to be read as it goes
 #   bash scripts/smoke.sh --shard 2/6          # this shard's share of the examples, for one CI runner
 set -uo pipefail
@@ -37,21 +36,17 @@ DEFAULT_PARALLEL=4
 
 # Run with no arguments the script prints how to use it, then carries on with every example.
 if [ "$#" -eq 0 ]; then
-    echo "Usage: bash scripts/smoke.sh [--update] [--parallel <n>] [--shard <n>/<total>] [smoke-test-name]"
+    echo "Usage: bash scripts/smoke.sh [--parallel <n>] [--shard <n>/<total>] [smoke-test-name]"
     echo "  With no arguments, runs every smoke test."
     echo ""
 fi
 
-UPDATE=false
 ONLY=""
 SHARD=""
 PARALLEL="${PARALLEL:-$DEFAULT_PARALLEL}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --update)
-            UPDATE=true
-            ;;
         --shard)
             shift
             if [ "$#" -eq 0 ]; then
@@ -69,7 +64,7 @@ while [ "$#" -gt 0 ]; do
             PARALLEL="$1"
             ;;
         --*)
-            echo "Unknown option \"$1\". Known options: --update, --parallel <n>, --shard <n>/<total>." >&2
+            echo "Unknown option \"$1\". Known options: --parallel <n>, --shard <n>/<total>." >&2
             exit 1
             ;;
         *)
@@ -270,12 +265,6 @@ run_one() {
     fi
     if [ "$kind" = "non-working" ] && [ "$code" -eq 0 ]; then
         refuse "it exited 0, and a non-working example has to exit non-zero."
-        return
-    fi
-
-    if [ "$UPDATE" = true ]; then
-        cp "$output" "$directory/expected.txt"
-        echo "pass" > "$RESULT_DIR/$slug.verdict"
         return
     fi
 
@@ -499,7 +488,7 @@ copy_example() {
 # Takes out of a run's output what the cache adds to it and the time it took, so a run from the
 # cache can be compared with the run that made the cache.
 without_cache_lines() {
-    sed -E -e '/^  Loaded the results of /d' -e 's/ \(from the cache\)$//' -e '/^ +Took [0-9hms ]+\.$/d'
+    sed -E -e '/^  Cached [0-9]+ source files?, [0-9]+ sim files?\.$/d' -e 's/ \(from the cache\)$//' -e '/^ +Took [0-9hms ]+\.$/d'
 }
 
 if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
@@ -513,7 +502,7 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     without_cache_lines < "$RESULT_DIR/cached-second.txt" > "$RESULT_DIR/cached-second.compared"
     if grep -q "^Cleared the results Faultline kept of earlier runs" "$RESULT_DIR/cached-clear.txt" &&
         ! grep -q "from the cache" "$RESULT_DIR/cached-first.txt" &&
-        grep -q "^  Loaded the results of 2 source files and 1 sim file from the cache\." "$RESULT_DIR/cached-second.txt" &&
+        grep -q "^  Cached 2 source files, 1 sim file\.$" "$RESULT_DIR/cached-second.txt" &&
         grep -q "^  caller.zig (from the cache)$" "$RESULT_DIR/cached-second.txt" &&
         grep -q "^  lookup.zig (from the cache)$" "$RESULT_DIR/cached-second.txt" &&
         cmp -s "$RESULT_DIR/cached-first.compared" "$RESULT_DIR/cached-second.compared"; then
@@ -562,7 +551,7 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     (cd "$CRASH_DIR" && NO_COLOR=1 "$ZIG" build flt clear >/dev/null 2>&1; NO_COLOR=1 "$ZIG" build flt -- --no-cache >"$RESULT_DIR/kept-crash-second.txt" 2>&1)
     if ! grep -q "^  Replayed " "$RESULT_DIR/kept-crash-first.txt" &&
         grep -q "crashed" "$RESULT_DIR/kept-crash-first.txt" &&
-        grep -Eq "^  Replayed [0-9]+ crash(es)? kept from earlier runs, and [1-9][0-9]* of them still fails?\.$" "$RESULT_DIR/kept-crash-second.txt"; then
+        grep -Eq "^  Replayed [0-9]+ kept crash(es)?, [1-9][0-9]* still fails?\.$" "$RESULT_DIR/kept-crash-second.txt"; then
         printf '  %spass%s  a crash one run finds is replayed by the next, after --no-cache and clear\n' "$GREEN" "$RESET"
     else
         printf '  %sFAIL%s  a crash one run finds is replayed by the next, after --no-cache and clear\n' "$RED" "$RESET"
@@ -581,9 +570,9 @@ if [ "${#FAILED[@]}" -gt 0 ]; then
     exit 1
 fi
 
-# A complete run marks the target up to date. A run of one example, and a run that rewrote the
-# expected files, covered part of the target or changed what it compares against, so neither does.
-if [ -z "$ONLY" ] && [ -z "$SHARD" ] && [ "$UPDATE" = false ]; then
+# A complete run marks the target up to date. A run of one example or one shard covered part of the
+# target, so it does not.
+if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     if command -v what-changed >/dev/null 2>&1; then
         # Its output is collected and echoed rather than left to go straight out, because it seeks
         # to the start of whatever it was handed and writes there. Sent to a terminal that is

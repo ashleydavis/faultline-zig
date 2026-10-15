@@ -1,9 +1,6 @@
 Fault testing the Zig source in 47-generic-function.
 
-  Read 1 source file, with 1 function to exercise.
-
-  Found 1 source file, called 0 functions and exercised 0 of 3 code paths.
-  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Read 1 source file, 1 function.
 
   One thing to do:
     Write a scenario that calls first at lists.zig:4. It is generic, so Faultline cannot work out what its type parameters stand for.
@@ -12,5 +9,6 @@ Fault testing the Zig source in 47-generic-function.
 
   Coverage: 0 of 3 code paths, 0%.
 
+  Exercised 0 code paths, 0 functions, 0 files.
 
   Every failure and every thing to do is in <cache>/faultline-report.txt.

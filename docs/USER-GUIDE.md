@@ -118,11 +118,17 @@ Faultline prints a checklist of what you need to do have it exercise every code 
 
 Faultline does not execute again code an earlier run already proved and that is unchanged since. It keeps the complete result of every source file and sim file in your build's cache: every call's count, every failure and which code paths were exercised. A later run loads a file's result from the cache when that file, everything it imports, its sim file, every `global.sim.zig` and Faultline itself are all unchanged, and so is every file whose calls exercised its code paths. Every other file is executed, and so is every file whose calls exercised the code paths of a file that is executed. The report is the same as the run that made the result printed, so a run whose results all come from the cache returns in a moment.
 
-The run says how many files' results it loaded. With `--full-report` (below), the block of each source file whose result came from the cache says so in its heading:
+The run says how many files' results it loaded, just before the time it took:
 
 ```
-  Loaded the results of 2 source files and 1 sim file from the cache. Neither they nor anything they depend on changed since the run that proved them, so they were not executed again.
+  Exercised 4 code paths, 2 functions, 2 files.
+  Cached 2 source files, 1 sim file.
+  Took 26ms.
+```
 
+With `--full-report` (below), the block of each source file whose result came from the cache says so in its heading:
+
+```
   src/format.zig (from the cache)
     ok   formatFileSize                     9/9 code paths, 120 calls
 ```
@@ -138,7 +144,7 @@ The run says how many files' results it loaded. With `--full-report` (below), th
 Each run picks its values from a new seed, so a call that crashed on one run may not be made on the next. Faultline keeps the replay token of every call that has crashed in `.zig-cache/flt-crashes.txt` and replays every one of them at the start of every run, before any call of its own, whatever the run's seed. A kept crash that still fails is reported with the rest of the run's failures:
 
 ```
-  Replayed 1 crash kept from earlier runs, and 1 of them still fails.
+  Replayed 1 kept crash, 1 still fails.
 ```
 
 - A token stays in the file after its crash is fixed, so the crash is found again if it comes back.
@@ -372,6 +378,6 @@ The call to parseHeader failed with ParsedWrong.
 Reproduce it with: zig build flt -Dreplay="<token>"
 ```
 
-For a crash it shows where the crash happened, in the way Elm and Rust show an error: the file and line, the values the call was made with, the failure it injected, your code with a mark under the place (and the standard library's line too when the panic is there), the stack trace from the `zig build flt` command down to the panic and a hint for that kind of crash. `docs/OUTPUT.md` has an example under "A crash". Start from the hint, fix the code so it handles that input or that failure, and run the replay command again to check the crash is gone.
+For a crash it shows where the crash happened, in the way Elm and Rust show an error: the file and line, the values the call was made with, the failure it injected, your code with a mark under the place (and the standard library's line too when the panic is there), the stack trace from the `zig build flt` command down to the panic and a hint for that kind of crash. Start from the hint, fix the code so it handles that input or that failure, and run the replay command again to check the crash is gone.
 
 The token holds the plan of injected failures and the values chosen. Run the command and Faultline drives the same calls in the same order and gives the same answer, with no other flag, environment or file.

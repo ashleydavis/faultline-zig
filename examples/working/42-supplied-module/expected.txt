@@ -1,13 +1,11 @@
 Fault testing the Zig source in 42-supplied-module.
 
-  Read 2 source files, with 2 functions to exercise.
-
-  Found 2 source files, called 2 functions and exercised 6 of 6 code paths.
-  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Read 2 source files, 2 functions.
 
   No call crashed, hung or found an expectation false.
 
   Coverage: 6 of 6 code paths, 100%.
 
+  Exercised 6 code paths, 2 functions, 2 files.
 
   Every failure and every thing to do is in <cache>/faultline-report.txt.

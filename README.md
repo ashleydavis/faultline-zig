@@ -27,5 +27,4 @@ Faultline is a library your project depends on. `zig build flt` runs Faultline.
 - [User guide](docs/USER-GUIDE.md) for the full detail.
 - [Contract](docs/CONTRACT.md) for what Faultline promises.
 - [Failures](docs/FAILURES.md) for every failure type Faultline injects.
-- [Output](docs/OUTPUT.md) for what Faultline prints and what each line means.
 - [Development](docs/DEVELOPMENT.md) to work on Faultline itself.

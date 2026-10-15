@@ -1,13 +1,11 @@
 Fault testing the Zig source in 20-string-literals.
 
-  Read 1 source file, with 1 function to exercise.
-
-  Found 1 source file, called 1 function and exercised 3 of 3 code paths.
-  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Read 1 source file, 1 function.
 
   No call crashed, hung or found an expectation false.
 
   Coverage: 3 of 3 code paths, 100%.
 
+  Exercised 3 code paths, 1 function, 1 file.
 
   Every failure and every thing to do is in <cache>/faultline-report.txt.

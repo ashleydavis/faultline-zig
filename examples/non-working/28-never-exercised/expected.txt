@@ -1,9 +1,6 @@
 Fault testing the Zig source in 28-never-exercised.
 
-  Read 1 source file, with 1 function to exercise.
-
-  Found 1 source file, called 1 function and exercised 2 of 3 code paths.
-  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Read 1 source file, 1 function.
 
   One thing to do:
     Write a value factory that reaches the true side of the if at gateway.zig:15 in opens, or a scenario that exercises it if no value factory can.
@@ -12,5 +9,6 @@ Fault testing the Zig source in 28-never-exercised.
 
   Coverage: 2 of 3 code paths, 66%.
 
+  Exercised 2 code paths, 1 function, 1 file.
 
   Every failure and every thing to do is in <cache>/faultline-report.txt.

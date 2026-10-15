@@ -1,9 +1,6 @@
 Fault testing the Zig source in 65-factory-in-another-sim-file.
 
-  Read 2 source files, with 2 functions to exercise.
-
-  Found 2 source files, called 1 function and exercised 3 of 6 code paths.
-  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Read 2 source files, 2 functions.
 
   One thing to do:
     Write a value factory returning store.Store, which firstOf takes. Without one, firstOf at reader.zig:7 cannot be called at all.
@@ -12,5 +9,6 @@ Fault testing the Zig source in 65-factory-in-another-sim-file.
 
   Coverage: 3 of 6 code paths, 50%.
 
+  Exercised 3 code paths, 1 function, 1 file.
 
   Every failure and every thing to do is in <cache>/faultline-report.txt.

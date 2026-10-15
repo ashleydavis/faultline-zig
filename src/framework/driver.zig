@@ -268,7 +268,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         }
     }
 
-    output_mod.print("\n  Read {d} source file{s}, with {d} function{s} to exercise.\n", .{
+    output_mod.print("\n  Read {d} source file{s}, {d} function{s}.\n", .{
         checklist_files.items.len,
         plural(checklist_files.items.len),
         selected.items.len,
@@ -292,7 +292,6 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     if (cache_directory) |directory| {
         cache = try run_cache.prepare(Subject, allocator, io, args, directory, checklists.items);
         try run_cache.load(Subject, allocator, cache, checklists.items, standings, &failures);
-        printLoaded(cache);
     }
     var record: run_cache.Record = .{};
 
@@ -404,7 +403,7 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     }
 
     const elapsed = started_at.durationTo(std.Io.Clock.Timestamp.now(io, .awake));
-    return report(Subject, allocator, io, args, style, cache, selected.items, checklist_files.items.len, checklists.items, standings, failures.items, elapsed.raw.nanoseconds);
+    return report(Subject, allocator, io, args, style, cache, selected.items, checklists.items, standings, failures.items, elapsed.raw.nanoseconds);
 }
 
 // Runs one pass: splits its work into shards (see `shards.zig`), runs a worker under kcov for each,
@@ -882,7 +881,7 @@ fn replayKeptCrashes(
         output_mod.print("  Dropped a kept crash, because {s}: {s}\n", .{ dropped_because, token });
     }
     if (replayed != 0) {
-        output_mod.print("  Replayed {d} crash{s} kept from earlier runs, and {d} of them still {s}.\n", .{
+        output_mod.print("  Replayed {d} kept crash{s}, {d} still {s}.\n", .{
             replayed,
             if (replayed == 1) "" else "es",
             still_failing,
@@ -915,13 +914,14 @@ pub fn hasFailureToken(failures: []const worker.Failure, token: []const u8) bool
     return false;
 }
 
-// Says how many files' results came from the cache. Silent when none did.
+// Says how many files' results came from the cache, just before the time the run took, which is
+// short because of it. Silent when none did.
 fn printLoaded(cache: run_cache.State) void {
     const counts = cache.loadedCounts();
     if (counts.sources + counts.simulations == 0) {
         return;
     }
-    output_mod.print("  Loaded the results of {d} source file{s} and {d} sim file{s} from the cache. Neither they nor anything they depend on changed since the run that proved them, so they were not executed again.\n", .{
+    output_mod.print("  Cached {d} source file{s}, {d} sim file{s}.\n", .{
         counts.sources,
         plural(counts.sources),
         counts.simulations,
@@ -955,7 +955,6 @@ fn report(
     style: style_mod.Style,
     cache: run_cache.State,
     selected: []const usize,
-    file_count: usize,
     checklists: []coverage.Checklist,
     standings: []const Standing,
     failures: []const worker.Failure,
@@ -967,17 +966,25 @@ fn report(
     if (args.full_report) {
         output_mod.print("\nFault testing\n", .{});
     }
+    // A function is exercised when any of its code paths ran, and a file when any of its functions
+    // was, whoever called them.
     var previous_file: []const u8 = "";
     var exercised_functions: usize = 0;
+    var exercised_files: usize = 0;
+    var last_exercised_file: []const u8 = "";
     for (checklists) |one| {
-        const standing = standingOf(Subject, standings, one.file, one.function);
-        const was_called = standing != null and standing.?.was_called;
-        if (was_called) {
+        if (one.tickedCount() != 0) {
             exercised_functions += 1;
+            if (!std.mem.eql(u8, last_exercised_file, one.file)) {
+                exercised_files += 1;
+                last_exercised_file = one.file;
+            }
         }
         if (!args.full_report) {
             continue;
         }
+        const standing = standingOf(Subject, standings, one.file, one.function);
+        const was_called = standing != null and standing.?.was_called;
         if (!std.mem.eql(u8, previous_file, one.file)) {
             if (cache.isLoaded(one.file)) {
                 output_mod.print("\n  {s} (from the cache)\n", .{one.file});
@@ -999,11 +1006,6 @@ fn report(
     }
 
     const counts = coverage.countPaths(checklists);
-    output_mod.print(
-        "\n  Found {d} source file{s}, called {d} function{s} and exercised {d} of {d} code paths.\n",
-        .{ file_count, plural(file_count), exercised_functions, plural(exercised_functions), counts.ticked, counts.total },
-    );
-    output_mod.print("  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.\n", .{});
 
     // The code paths nothing exercised, and what to do about them.
     const unticked = try coverage.listUnticked(allocator, checklists);
@@ -1061,6 +1063,15 @@ fn report(
     checklist_mod.print(items.items, style);
     report_mod.printFailureCounts(failures, style);
     checklist_mod.printCoverage(counts.ticked, counts.total, style);
+    output_mod.print("  Exercised {d} code path{s}, {d} function{s}, {d} file{s}.\n", .{
+        counts.ticked,
+        plural(counts.ticked),
+        exercised_functions,
+        plural(exercised_functions),
+        exercised_files,
+        plural(exercised_files),
+    });
+    printLoaded(cache);
     report_mod.printTimeTaken(@intCast(@max(elapsed_nanoseconds, 0)));
     // The one place the path is printed: at the end, where it is read after everything above
     // points to the report file.

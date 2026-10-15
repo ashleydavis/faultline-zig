@@ -1,9 +1,6 @@
 Fault testing the Zig source in 38-incomplete-coverage.
 
-  Read 1 source file, with 2 functions to exercise.
-
-  Found 1 source file, called 2 functions and exercised 7 of 8 code paths.
-  Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
+  Read 1 source file, 2 functions.
 
   One thing to do:
     Write a value factory that reaches the true side of the if at rounding.zig:19 in upTo, or a scenario that exercises it if no value factory can.
@@ -12,5 +9,6 @@ Fault testing the Zig source in 38-incomplete-coverage.
 
   Coverage: 7 of 8 code paths, 87%.
 
+  Exercised 7 code paths, 2 functions, 1 file.
 
   Every failure and every thing to do is in <cache>/faultline-report.txt.
