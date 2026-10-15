@@ -39,7 +39,7 @@ Each pass of a run is split into shards, one per source file or sim file, and up
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push and pull request, on Linux only because Faultline needs kcov and `/proc`. It runs two jobs at once: one runs `zig build` and `zig build test`, and the other builds kcov from its tagged source and runs `bash scripts/smoke.sh`.
+`.github/workflows/ci.yml` runs on every push and pull request, on Linux only because Faultline needs kcov and `/proc`. It runs two jobs at once: one runs `zig build` and `zig build test`, and the other builds kcov from its tagged source, keeping the build between runs, and runs `bash scripts/smoke.sh`.
 
 ## The pre-commit hook
 

@@ -58,17 +58,30 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      # Built from its tagged source, so every run uses the same kcov whatever the runner's
-      # package archive holds.
+      # kcov built from its tagged source, so every run uses the same kcov whatever the runner's
+      # package archive holds. The build is kept between runs and made again only when the tag or
+      # the runner image changes.
+      - name: Restore kcov
+        id: kcov-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/kcov
+          key: kcov-${{ env.KCOV_VERSION }}-ubuntu-24.04
+
+      # The packages are installed on every run, because kcov needs their libraries to run as well
+      # as to build.
       - name: Install kcov
         run: |
           sudo apt-get update
           sudo apt-get install --yes cmake binutils-dev libssl-dev libcurl4-openssl-dev zlib1g-dev libdw-dev libiberty-dev
-          git clone --branch "$KCOV_VERSION" --depth 1 https://github.com/SimonKagstrom/kcov.git "$RUNNER_TEMP/kcov"
-          cmake -S "$RUNNER_TEMP/kcov" -B "$RUNNER_TEMP/kcov/build"
-          cmake --build "$RUNNER_TEMP/kcov/build" --parallel
-          sudo cmake --install "$RUNNER_TEMP/kcov/build"
-          kcov --version
+          if [ "${{ steps.kcov-cache.outputs.cache-hit }}" != "true" ]; then
+              git clone --branch "$KCOV_VERSION" --depth 1 https://github.com/SimonKagstrom/kcov.git "$RUNNER_TEMP/kcov"
+              cmake -S "$RUNNER_TEMP/kcov" -B "$RUNNER_TEMP/kcov/build" -DCMAKE_INSTALL_PREFIX="$HOME/kcov"
+              cmake --build "$RUNNER_TEMP/kcov/build" --parallel
+              cmake --install "$RUNNER_TEMP/kcov/build"
+          fi
+          echo "$HOME/kcov/bin" >> "$GITHUB_PATH"
+          "$HOME/kcov/bin/kcov" --version
 
       - name: Smoke tests
         run: bash scripts/smoke.sh
