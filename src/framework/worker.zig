@@ -146,15 +146,25 @@ fn nowNs() u64 {
     return @as(u64, @intCast(now.sec)) * std.time.ns_per_s + @as(u64, @intCast(now.nsec));
 }
 
-// How long the run has been going, as the fragment the progress line reads it back as: "9s" for
-// under a minute and "2m 14s" above it. The buffer is the caller's, so this allocates nothing on a
-// path that runs twice a second.
+// How long the run has been going, as the progress line and the report's last lines read it:
+// "250ms" under a second, "9s 120ms" under a minute, "2m 14s" under an hour and "1h 5m 3s" from
+// an hour up. Each form names the two or three units a person reads a time of that length in, so
+// a short run is not shown as "0s" and a long one is not shown as "125m". The buffer is the
+// caller's, so this allocates nothing on a path that runs twice a second.
 pub fn elapsedText(buffer: []u8, nanos: u64) []const u8 {
+    const milliseconds = nanos / std.time.ns_per_ms;
     const seconds = nanos / std.time.ns_per_s;
-    if (seconds < 60) {
-        return std.fmt.bufPrint(buffer, "{d}s", .{seconds}) catch "a while";
-    }
-    return std.fmt.bufPrint(buffer, "{d}m {d}s", .{ seconds / 60, seconds % 60 }) catch "a while";
+    const minutes = seconds / std.time.s_per_min;
+    const hours = seconds / std.time.s_per_hour;
+    const written = if (seconds < 1)
+        std.fmt.bufPrint(buffer, "{d}ms", .{milliseconds})
+    else if (minutes < 1)
+        std.fmt.bufPrint(buffer, "{d}s {d}ms", .{ seconds, milliseconds % std.time.ms_per_s })
+    else if (hours < 1)
+        std.fmt.bufPrint(buffer, "{d}m {d}s", .{ minutes, seconds % std.time.s_per_min })
+    else
+        std.fmt.bufPrint(buffer, "{d}h {d}m {d}s", .{ hours, minutes % 60, seconds % std.time.s_per_min });
+    return written catch "a while";
 }
 
 // Whether enough time has passed since the last progress line for another one.

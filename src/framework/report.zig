@@ -31,6 +31,21 @@ pub fn printFailure(failure: worker.Failure, subject: []const u8) void {
     printReplay(failure.token);
 }
 
+// Prints how long the run took, as the line the report ends with before the path to the report
+// file.
+pub fn printTimeTaken(nanos: u64) void {
+    var buffer: [64]u8 = undefined;
+    var line = std.Io.Writer.fixed(&buffer);
+    writeTimeTaken(&line, nanos) catch {};
+    output_mod.print("{s}", .{line.buffered()});
+}
+
+// Writes the line `printTimeTaken` prints, in the same words as the progress line's running time.
+pub fn writeTimeTaken(writer: *std.Io.Writer, nanos: u64) std.Io.Writer.Error!void {
+    var buffer: [48]u8 = undefined;
+    try writer.print("  Took {s}.\n", .{worker.elapsedText(&buffer, nanos)});
+}
+
 // Prints how many calls failed, kind by kind, and in how many functions and scenarios, as the
 // summary the report ends with beside the coverage line.
 pub fn printFailureCounts(failures: []const worker.Failure, style: style_mod.Style) void {

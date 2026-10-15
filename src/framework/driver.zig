@@ -954,8 +954,7 @@ fn report(
     checklist_mod.print(items.items, style);
     report_mod.printFailureCounts(failures, style);
     checklist_mod.printCoverage(counts.ticked, counts.total, style);
-    const seconds: i96 = @divTrunc(elapsed_nanoseconds, std.time.ns_per_s);
-    output_mod.print("  Took {d}s.\n", .{seconds});
+    report_mod.printTimeTaken(@intCast(@max(elapsed_nanoseconds, 0)));
     // The one place the path is printed: at the end, where it is read after everything above
     // points to the report file.
     if (args.report) |report_path| {

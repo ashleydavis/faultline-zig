@@ -98,3 +98,38 @@ test "writeFailureCounts says so when nothing failed" {
 
     try std.testing.expectEqualStrings("  No call crashed, hung or found an expectation false.\n", text);
 }
+
+fn timeTakenOf(allocator: std.mem.Allocator, nanos: u64) ![]u8 {
+    var written: std.Io.Writer.Allocating = .init(allocator);
+    defer written.deinit();
+    try report.writeTimeTaken(&written.writer, nanos);
+    return allocator.dupe(u8, written.written());
+}
+
+test "writeTimeTaken reads a run under a second in milliseconds" {
+    const text = try timeTakenOf(std.testing.allocator, 250 * std.time.ns_per_ms);
+    defer std.testing.allocator.free(text);
+
+    try std.testing.expectEqualStrings("  Took 250ms.\n", text);
+}
+
+test "writeTimeTaken reads a run under a minute in seconds and milliseconds" {
+    const text = try timeTakenOf(std.testing.allocator, 49 * std.time.ns_per_s + 120 * std.time.ns_per_ms);
+    defer std.testing.allocator.free(text);
+
+    try std.testing.expectEqualStrings("  Took 49s 120ms.\n", text);
+}
+
+test "writeTimeTaken reads a run under an hour in minutes and seconds" {
+    const text = try timeTakenOf(std.testing.allocator, 109 * std.time.ns_per_s);
+    defer std.testing.allocator.free(text);
+
+    try std.testing.expectEqualStrings("  Took 1m 49s.\n", text);
+}
+
+test "writeTimeTaken reads a run of an hour or more in hours, minutes and seconds" {
+    const text = try timeTakenOf(std.testing.allocator, 7503 * std.time.ns_per_s);
+    defer std.testing.allocator.free(text);
+
+    try std.testing.expectEqualStrings("  Took 2h 5m 3s.\n", text);
+}

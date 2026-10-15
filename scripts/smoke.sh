@@ -175,7 +175,7 @@ mkdir -p "$RESULT_DIR"
 normalise() {
     sed -E \
         -e "s|$REPO_DIR/||g" \
-        -e '/^ +Took [0-9]+(m [0-9]+)?s\.$/d' \
+        -e '/^ +Took [0-9hms ]+\.$/d' \
         -e 's/, [0-9]+ calls//' \
         -e 's/seed=[0-9]+/seed=<seed>/g' \
         -e 's|[A-Za-z0-9_./+-]*\.zig-cache/faultline-report\.txt|<cache>/faultline-report.txt|g' \
@@ -495,7 +495,7 @@ copy_example() {
 # Takes out of a run's output what the cache adds to it and the time it took, so a run from the
 # cache can be compared with the run that made the cache.
 without_cache_lines() {
-    sed -E -e '/^  Loaded the results of /d' -e 's/ \(from the cache\)$//' -e '/^ +Took [0-9]+(m [0-9]+)?s\.$/d'
+    sed -E -e '/^  Loaded the results of /d' -e 's/ \(from the cache\)$//' -e '/^ +Took [0-9hms ]+\.$/d'
 }
 
 if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then

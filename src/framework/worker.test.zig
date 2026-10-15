@@ -286,13 +286,44 @@ test "a complaint with no thread number is kept as it is and blank lines are ski
     try std.testing.expectEqualStrings("thread is not followed by a number", thread_word);
 }
 
-test "elapsed time reads as seconds under a minute and minutes and seconds above it" {
-    var buffer: [32]u8 = undefined;
+// One run length and the words it should read as.
+const ElapsedCase = struct {
+    // The run length.
+    nanos: u64,
+    // How it should read.
+    text: []const u8,
+};
 
-    try std.testing.expectEqualStrings("0s", worker.elapsedText(&buffer, 400 * std.time.ns_per_ms));
-    try std.testing.expectEqualStrings("59s", worker.elapsedText(&buffer, 59 * std.time.ns_per_s));
-    try std.testing.expectEqualStrings("1m 0s", worker.elapsedText(&buffer, 60 * std.time.ns_per_s));
-    try std.testing.expectEqualStrings("2m 14s", worker.elapsedText(&buffer, 134 * std.time.ns_per_s));
+// Run lengths from no time at all to several hours, with each edge between two forms on both sides.
+const elapsed_cases = [_]ElapsedCase{
+    .{ .nanos = 0, .text = "0ms" },
+    .{ .nanos = 999_999, .text = "0ms" },
+    .{ .nanos = std.time.ns_per_ms, .text = "1ms" },
+    .{ .nanos = 250 * std.time.ns_per_ms, .text = "250ms" },
+    .{ .nanos = 999 * std.time.ns_per_ms, .text = "999ms" },
+    .{ .nanos = std.time.ns_per_s, .text = "1s 0ms" },
+    .{ .nanos = 1500 * std.time.ns_per_ms, .text = "1s 500ms" },
+    .{ .nanos = 49 * std.time.ns_per_s + 120 * std.time.ns_per_ms, .text = "49s 120ms" },
+    .{ .nanos = 59_999 * std.time.ns_per_ms, .text = "59s 999ms" },
+    .{ .nanos = 60 * std.time.ns_per_s, .text = "1m 0s" },
+    .{ .nanos = 109 * std.time.ns_per_s, .text = "1m 49s" },
+    .{ .nanos = 134 * std.time.ns_per_s, .text = "2m 14s" },
+    .{ .nanos = 3599 * std.time.ns_per_s, .text = "59m 59s" },
+    .{ .nanos = 3600 * std.time.ns_per_s, .text = "1h 0m 0s" },
+    .{ .nanos = 7503 * std.time.ns_per_s, .text = "2h 5m 3s" },
+    .{ .nanos = 100 * std.time.ns_per_hour + 59 * std.time.ns_per_min + 59 * std.time.ns_per_s, .text = "100h 59m 59s" },
+};
+
+test "elapsed time reads in milliseconds, seconds, minutes or hours as its length needs" {
+    for (elapsed_cases) |case| {
+        var buffer: [48]u8 = undefined;
+        try std.testing.expectEqualStrings(case.text, worker.elapsedText(&buffer, case.nanos));
+    }
+}
+
+test "elapsed time keeps the milliseconds when the seconds are whole" {
+    var buffer: [48]u8 = undefined;
+    try std.testing.expectEqualStrings("7s 0ms", worker.elapsedText(&buffer, 7 * std.time.ns_per_s));
 }
 
 test "elapsed time that does not fit the buffer reads as a while" {
@@ -318,7 +349,7 @@ test "a call is counted and says where the run has got to when somebody is watch
 
     worker.reportProgress("src/greeting.zig", "greet");
 
-    try std.testing.expectEqualStrings("  Exercised 1 call in 0s, now in src/greeting.zig greet.", buffer.written());
+    try std.testing.expectEqualStrings("  Exercised 1 call in 0ms, now in src/greeting.zig greet.", buffer.written());
     worker.resetProgress();
 }
 

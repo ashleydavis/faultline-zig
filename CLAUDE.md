@@ -29,7 +29,7 @@ Run the narrowest suite that covers your change first, then `bash scripts/test-e
 
 Run `bash scripts/install-hooks.sh` in every fresh clone before committing.
 
-Never bypass or edit the pre-commit hook, or the scripts it calls. When it refuses a commit, fix what failed and commit again.
+Never bypass or edit the pre-commit hook itself (`.githooks/pre-commit`). Every script it runs, and every test, is code like any other and is changed when the work needs it. When the hook refuses a commit, fix what failed and commit again.
 
 ## Commits
 
