@@ -225,6 +225,10 @@ pub fn addFaultTest(b: *std.Build, options: FaultTestOptions) void {
     const results_path = b.pathJoin(&.{ cache, "flt-results" });
     run.addArgs(&.{ "--results-cache", results_path });
     run.addArgs(&.{ "--cache-salt", saltOf(b, faultline, target, options.optimize) });
+
+    // Every crash any run has found, replayed by every run so none is lost to a seed that misses
+    // it. Kept apart from the results, so `--no-cache` and `zig build flt clear` leave it alone.
+    run.addArgs(&.{ "--crashes", b.pathJoin(&.{ cache, "flt-crashes.txt" }) });
     run.addArg("--sources-root");
     run.addDirectoryArg(written.getDirectory());
     if (b.option([]const u8, "kcov", "The kcov binary, when it is not on the PATH")) |named_path| {

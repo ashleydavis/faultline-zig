@@ -20,6 +20,7 @@ test {
     _ = @import("framework/selection.zig");
     _ = @import("framework/driver.zig");
     _ = @import("framework/results_cache.zig");
+    _ = @import("framework/crash_store.zig");
     _ = @import("framework/crash_view.zig");
     _ = @import("framework/report.zig");
 }

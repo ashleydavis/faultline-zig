@@ -10,6 +10,7 @@ test "no arguments gives every default" {
     try std.testing.expect(!parsed.worker);
     try std.testing.expect(!parsed.no_color);
     try std.testing.expect(parsed.results_cache == null);
+    try std.testing.expect(parsed.crashes == null);
     try std.testing.expect(!parsed.no_cache);
 }
 
@@ -27,6 +28,7 @@ test "every option that takes a value is read" {
         "--result",     "result.txt",
         "--seed",       "42",
         "--results-cache", "cache",
+        "--crashes",    "crashes.txt",
         "--cache-salt", "salt",
     });
 
@@ -42,6 +44,7 @@ test "every option that takes a value is read" {
     try std.testing.expectEqualStrings("result.txt", parsed.result.?);
     try std.testing.expectEqual(@as(u64, 42), parsed.seed.?);
     try std.testing.expectEqualStrings("cache", parsed.results_cache.?);
+    try std.testing.expectEqualStrings("crashes.txt", parsed.crashes.?);
     try std.testing.expectEqualStrings("salt", parsed.cache_salt);
 }
 

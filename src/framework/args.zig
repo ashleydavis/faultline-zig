@@ -63,6 +63,10 @@ pub const Args = struct {
     // The directory the results of earlier runs are kept in, or null for a run that keeps none.
     results_cache: ?[]const u8 = null,
 
+    // The file the replay token of every crash is kept in (see `crash_store.zig`), or null for a
+    // run that keeps none.
+    crashes: ?[]const u8 = null,
+
     // What the build says about Faultline itself and how the program was built, which goes into
     // every key of the results cache so a different Faultline never uses another's results.
     cache_salt: []const u8 = "",
@@ -98,6 +102,8 @@ pub fn parse(arguments: []const []const u8) ParseError!Args {
             parsed.trace = true;
         } else if (std.mem.eql(u8, option, "--results-cache")) {
             parsed.results_cache = try valueOf(arguments, &index);
+        } else if (std.mem.eql(u8, option, "--crashes")) {
+            parsed.crashes = try valueOf(arguments, &index);
         } else if (std.mem.eql(u8, option, "--cache-salt")) {
             parsed.cache_salt = try valueOf(arguments, &index);
         } else if (std.mem.eql(u8, option, "--repository")) {

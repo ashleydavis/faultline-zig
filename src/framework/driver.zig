@@ -10,6 +10,7 @@ const std = @import("std");
 const args_mod = @import("args.zig");
 const checklist_mod = @import("checklist.zig");
 const coverage = @import("coverage.zig");
+const crash_store = @import("crash_store.zig");
 const crash_view = @import("crash_view.zig");
 const covered_lines = @import("covered_lines.zig");
 const isolate = @import("isolate.zig");
@@ -295,6 +296,13 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     }
     var record: run_cache.Record = .{};
 
+    // Every crash an earlier run found is replayed before any call of this run, whatever its seed,
+    // so a crash is never lost to a seed that does not reach it.
+    var kept_crashes: []const []const u8 = &.{};
+    if (args.crashes) |path| {
+        kept_crashes = try replayKeptCrashes(Subject, allocator, io, args, selection, path, &failures);
+    }
+
     try std.Io.Dir.cwd().createDirPath(io, args.kcov_output);
     var progress: RunProgress = .{ .started_at = started_at };
 
@@ -380,6 +388,16 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     // In the order of the tables, and in the order they were found within one function or
     // scenario, so the report lists them the same way whichever files' results came from the cache.
     std.sort.block(worker.Failure, failures.items, {}, isFailureBefore);
+
+    if (args.crashes) |path| {
+        var found: std.ArrayList([]const u8) = .empty;
+        for (failures.items) |failure| {
+            if (failure.kind == .crash) {
+                try found.append(allocator, failure.token);
+            }
+        }
+        try crash_store.write(allocator, io, path, try crash_store.withNew(allocator, kept_crashes, found.items));
+    }
 
     if (cache_directory) |directory| {
         try run_cache.store(Subject, allocator, io, directory, cache, &record, checklists.items);
@@ -814,6 +832,87 @@ fn parametersOf(
         try parameters.append(allocator, parameter);
     }
     return parameters.items;
+}
+
+// Replays every crash kept in the file at `path` and adds each that still fails to `failures`,
+// unless a result from the cache already holds it. Gives back the tokens to keep: each one that
+// still names a call of the project, whether it still crashes or not, and each one outside the
+// run's `-Dfile` or `-Dfunction`, which is kept without being replayed. A token that no longer
+// names a call is dropped and the run says why.
+fn replayKeptCrashes(
+    comptime Subject: type,
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    args: args_mod.Args,
+    selection: selection_mod.Selection,
+    path: []const u8,
+    failures: *std.ArrayList(worker.Failure),
+) ![]const []const u8 {
+    const tokens = try crash_store.read(allocator, io, path);
+    var kept: std.ArrayList([]const u8) = .empty;
+    var replayed: usize = 0;
+    var still_failing: usize = 0;
+    for (tokens) |token| {
+        if (!isTokenSelected(allocator, selection, token)) {
+            try kept.append(allocator, token);
+            continue;
+        }
+        const verdict = try replay_mod.run(Subject, allocator, allocator, io, .{
+            .sources_root = args.sources_root,
+        }, token);
+        const dropped_because: []const u8 = switch (verdict) {
+            .passed => {
+                replayed += 1;
+                try kept.append(allocator, token);
+                continue;
+            },
+            .failed => |failure| {
+                replayed += 1;
+                still_failing += 1;
+                try kept.append(allocator, token);
+                if (!hasFailureToken(failures.items, token)) {
+                    try failures.append(allocator, failure);
+                }
+                continue;
+            },
+            .not_found => "the function or scenario it names is no longer in the project",
+            .not_replayable => "the values it names can no longer be built",
+            .bad_token => "it is not a replay token Faultline wrote",
+        };
+        output_mod.print("  Dropped a kept crash, because {s}: {s}\n", .{ dropped_because, token });
+    }
+    if (replayed != 0) {
+        output_mod.print("  Replayed {d} crash{s} kept from earlier runs, and {d} of them still {s}.\n", .{
+            replayed,
+            if (replayed == 1) "" else "es",
+            still_failing,
+            if (still_failing == 1) "fails" else "fail",
+        });
+    }
+    return kept.toOwnedSlice(allocator);
+}
+
+// Whether the run's `-Dfile` and `-Dfunction` take the call `token` names. A token that cannot be
+// read is taken, so its replay says what is wrong with it.
+pub fn isTokenSelected(allocator: std.mem.Allocator, selection: selection_mod.Selection, token: []const u8) bool {
+    if (!selection.isNarrowed()) {
+        return true;
+    }
+    var plan = plan_mod.parse(allocator, token) catch {
+        return true;
+    };
+    defer plan.deinit();
+    return selection.includesFunction(plan.file, plan.function) or selection.includesScenario(plan.file);
+}
+
+// Whether one of `failures` has the replay token `token`.
+pub fn hasFailureToken(failures: []const worker.Failure, token: []const u8) bool {
+    for (failures) |failure| {
+        if (std.mem.eql(u8, failure.token, token)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Says how many files' results came from the cache. Silent when none did.

@@ -128,6 +128,20 @@ The run says how many files' results it loaded, and the block of each source fil
 - A run narrowed with `-Dfile` or `-Dfunction` neither loads nor keeps results, because it makes fewer calls than a run of the whole project.
 - A file that imports a module a step of your build generates is always executed, because Faultline cannot tell whether that module changed.
 
+### Crashes kept from earlier runs
+
+Each run picks its values from a new seed, so a call that crashed on one run may not be made on the next. Faultline keeps the replay token of every call that has crashed in `.zig-cache/flt-crashes.txt` and replays every one of them at the start of every run, before any call of its own, whatever the run's seed. A kept crash that still fails is reported with the rest of the run's failures:
+
+```
+  Replayed 1 crash kept from earlier runs, and 1 of them still fails.
+```
+
+- A token stays in the file after its crash is fixed, so the crash is found again if it comes back.
+- A crash a run finds again with only a new seed is not added a second time, unless one of its values was drawn from the seed.
+- A token that no longer names a call of your project, because its function is gone or its values can no longer be built, is dropped and the run says why.
+- `zig build flt -- --no-cache` and `zig build flt clear` leave the kept crashes alone. Deleting `.zig-cache` throws them away.
+- A run narrowed with `-Dfile` or `-Dfunction` replays only the kept crashes in what it was narrowed to, and keeps the rest.
+
 ## Step 5: Read the report
 
 The report has a block per file and a line per function:

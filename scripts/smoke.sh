@@ -223,6 +223,10 @@ run_one() {
         done < "$directory/run-flags.txt"
     fi
 
+    # The crashes an earlier run kept are thrown away first, so the run prints what its expected.txt
+    # holds whatever ran before it. Keeping crashes has checks of its own below.
+    rm -f "$directory/.zig-cache/flt-crashes.txt"
+
     local code
     # Without the results cache, so every run executes every file and prints what its expected.txt
     # holds whatever ran before it. The cache has checks of its own below.
@@ -543,6 +547,26 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     else
         printf '  %sFAIL%s  a changed file is executed again and an unchanged one is not\n' "$RED" "$RESET"
         FAILED+=("working/41-individual-file")
+    fi
+fi
+
+if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
+    # A crash one run finds is replayed by the next, whatever its seed, and neither `--no-cache` nor
+    # `zig build flt clear` throws it away. Run on a copy of an example that crashes, beside this
+    # script's logs, because an example is never changed.
+    CRASH_DIR="$RESULT_DIR/kept-crash"
+    mkdir -p "$CRASH_DIR"
+    cp "$REPO_DIR/examples/non-working/36-crash-under-injection"/*.zig "$REPO_DIR/examples/non-working/36-crash-under-injection/build.zig.zon" "$CRASH_DIR"/
+    rm -f "$CRASH_DIR/.zig-cache/flt-crashes.txt"
+    (cd "$CRASH_DIR" && NO_COLOR=1 "$ZIG" build flt -- --no-cache >"$RESULT_DIR/kept-crash-first.txt" 2>&1)
+    (cd "$CRASH_DIR" && NO_COLOR=1 "$ZIG" build flt clear >/dev/null 2>&1; NO_COLOR=1 "$ZIG" build flt -- --no-cache >"$RESULT_DIR/kept-crash-second.txt" 2>&1)
+    if ! grep -q "^  Replayed " "$RESULT_DIR/kept-crash-first.txt" &&
+        grep -q "crashed" "$RESULT_DIR/kept-crash-first.txt" &&
+        grep -Eq "^  Replayed [0-9]+ crash(es)? kept from earlier runs, and [1-9][0-9]* of them still fails?\.$" "$RESULT_DIR/kept-crash-second.txt"; then
+        printf '  %spass%s  a crash one run finds is replayed by the next, after --no-cache and clear\n' "$GREEN" "$RESET"
+    else
+        printf '  %sFAIL%s  a crash one run finds is replayed by the next, after --no-cache and clear\n' "$RED" "$RESET"
+        FAILED+=("non-working/36-crash-under-injection")
     fi
 fi
 

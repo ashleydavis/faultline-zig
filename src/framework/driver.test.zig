@@ -3,6 +3,7 @@ const driver = @import("driver.zig");
 const project = @import("project.zig");
 const coverage = @import("coverage.zig");
 const checklist = @import("checklist.zig");
+const selection_mod = @import("selection.zig");
 
 const Alpha = struct {
     pub fn double(x: u32) u32 {
@@ -228,4 +229,34 @@ test "addResults adds the tallies to the standings and a failure two shards both
     try std.testing.expect(!standings[1].was_called);
     try std.testing.expectEqual(@as(usize, 1), failures.items.len);
     try std.testing.expectEqualStrings("token", failures.items[0].token);
+}
+
+test "isTokenSelected takes every token when the run is not narrowed" {
+    try std.testing.expect(driver.isTokenSelected(std.testing.allocator, .{}, "src/a.zig:f;seed=1"));
+}
+
+test "isTokenSelected takes a token for the chosen file and leaves one for another file" {
+    const selection: selection_mod.Selection = .{
+        .file = "src/a.zig",
+    };
+
+    try std.testing.expect(driver.isTokenSelected(std.testing.allocator, selection, "src/a.zig:f;seed=1"));
+    try std.testing.expect(!driver.isTokenSelected(std.testing.allocator, selection, "src/b.zig:g;seed=1"));
+}
+
+test "isTokenSelected takes a token it cannot read, so its replay says what is wrong with it" {
+    const selection: selection_mod.Selection = .{
+        .file = "src/a.zig",
+    };
+
+    try std.testing.expect(driver.isTokenSelected(std.testing.allocator, selection, ""));
+}
+
+test "hasFailureToken is true only when a failure has the token" {
+    const failures = [_]worker.Failure{
+        .{ .is_scenario = false, .index = 0, .kind = .crash, .token = "a" },
+    };
+
+    try std.testing.expect(driver.hasFailureToken(&failures, "a"));
+    try std.testing.expect(!driver.hasFailureToken(&failures, "b"));
 }

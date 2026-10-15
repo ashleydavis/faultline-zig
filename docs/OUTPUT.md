@@ -195,6 +195,18 @@ Hint: This line treats an error as one that cannot happen, with `catch unreachab
 Reproduce it with: zig build flt -Dreplay="<token>"
 ```
 
+A run that replays crashes kept from earlier runs says so before its own calls, and each kept crash that still fails is shown like any other:
+
+```
+  Replayed 1 crash kept from earlier runs, and 1 of them still fails.
+```
+
+A kept crash that no longer names a call of the project is dropped with a line saying why:
+
+```
+  Dropped a kept crash, because the function or scenario it names is no longer in the project: words.zig:vanished;seed=2920345936653814948;values=b0,b1;fail=allocator#0/allocation_fails
+```
+
 ## A scenario whose expectation failed
 
 Faultline says which scenario wrote the expectation, what it expected and the line it is on, then stops.
