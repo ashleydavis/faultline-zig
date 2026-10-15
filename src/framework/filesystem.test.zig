@@ -2769,6 +2769,11 @@ fn readTheCurrentDirectory(world: *World) anyerror!void {
     _ = try std.process.currentPath(world.io, &buffer);
 }
 
+fn readTheCurrentDirectoryIntoASmallBuffer(world: *World) anyerror!void {
+    var buffer: [64]u8 = undefined;
+    _ = try std.process.currentPath(world.io, &buffer);
+}
+
 fn changeTheCurrentDirectory(world: *World) anyerror!void {
     try std.process.setCurrentPath(world.io, "dir");
 }
@@ -2776,9 +2781,23 @@ fn changeTheCurrentDirectory(world: *World) anyerror!void {
 test "current directory rows: it was deleted or the path is too long" {
     try expectEveryCase(.current_directory, &.{
         .{ .id = "current_directory_was_deleted", .expected = error.CurrentDirUnlinked, .run = readTheCurrentDirectory },
-        .{ .id = "path_too_long", .expected = error.NameTooLong, .run = readTheCurrentDirectory },
+        .{ .id = "path_too_long", .expected = error.NameTooLong, .run = readTheCurrentDirectoryIntoASmallBuffer },
         .{ .id = "path_too_long", .expected = error.NameTooLong, .run = changeTheCurrentDirectory },
     });
+}
+
+test "current directory rows: a buffer as large as any path is never too small for the path" {
+    var world: World = undefined;
+    world.create(&.{});
+    defer world.destroy();
+    try seed();
+
+    try readTheCurrentDirectory(&world);
+    try testing.expectEqual(@as(usize, 1), world.injector.recorded.items.len);
+    const place = world.injector.recorded.items[0];
+    for (place.kinds) |index| {
+        try testing.expect(!std.mem.eql(u8, failures.kindsOf(.current_directory)[index].id, "path_too_long"));
+    }
 }
 
 test "current directory rows: changing directory cannot find the current one deleted" {

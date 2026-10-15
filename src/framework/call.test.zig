@@ -67,6 +67,20 @@ const FixtureSim = struct {
     pub fn passingScenario(context: *sim.ScenarioContext) anyerror!void {
         try context.expect(@src(), 1 == 1, "one to be one");
     }
+
+    pub fn writingScenario(context: *sim.ScenarioContext) anyerror!void {
+        context.writer.writeAll("hello") catch {
+            try context.expect(@src(), false, "the write to succeed");
+        };
+    }
+
+    pub fn allocatingScenario(context: *sim.ScenarioContext) anyerror!void {
+        const bytes = context.allocator.alloc(u8, 4) catch {
+            try context.expect(@src(), false, "the allocation to succeed");
+            return;
+        };
+        context.allocator.free(bytes);
+    }
 };
 
 const Factories = locator.Locator(FixtureSim);
@@ -241,6 +255,56 @@ test "a scenario that holds is reported as returned and its sim file's expectati
     defer report.deinit();
 
     try std.testing.expectEqualStrings("alwaysFalse", report.result.?.expectation_failed.function);
+}
+
+test "a scenario reports the places it reached, so each failure there can be tried" {
+    const Allocating = call.Scenario("allocatingScenario", FixtureSim.allocatingScenario, no_expectations);
+
+    var attempt = try runChild(Allocating.Child{ .real_io = std.testing.io, .seed = 1 });
+    defer attempt.deinit(std.testing.allocator);
+    var report = try wire.read(std.testing.allocator, attempt.output);
+    defer report.deinit();
+
+    try std.testing.expect(report.result.? == .returned);
+    try std.testing.expect(report.places.len >= 1);
+    try std.testing.expectEqual(point.Effect.allocator, report.places[0].point.effect);
+}
+
+test "a scenario's writer is a place Faultline can make fail" {
+    const Writing = call.Scenario("writingScenario", FixtureSim.writingScenario, no_expectations);
+
+    var attempt = try runChild(Writing.Child{ .real_io = std.testing.io, .seed = 1 });
+    defer attempt.deinit(std.testing.allocator);
+    var report = try wire.read(std.testing.allocator, attempt.output);
+    defer report.deinit();
+
+    try std.testing.expect(report.result.? == .returned);
+    var found = false;
+    for (report.places) |place| {
+        if (place.point.effect == .writer) {
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "a scenario's own expectation that does not hold under an injected failure is not reported" {
+    const Allocating = call.Scenario("allocatingScenario", FixtureSim.allocatingScenario, no_expectations);
+    var kind: u8 = 0;
+    for (failures.kindsOf(.allocator), 0..) |row, index| {
+        if (std.mem.eql(u8, row.id, "allocation_fails")) {
+            kind = @intCast(index);
+        }
+    }
+    const plan = [_]injector.Injection{.{ .point = .{ .effect = .allocator, .occurrence = 0 }, .kind = kind }};
+
+    var attempt = try runChild(Allocating.Child{ .real_io = std.testing.io, .seed = 1, .plan = &plan });
+    defer attempt.deinit(std.testing.allocator);
+    var report = try wire.read(std.testing.allocator, attempt.output);
+    defer report.deinit();
+
+    try std.testing.expect(attempt.isClean());
+    try std.testing.expect(report.result.? != .expectation_failed);
 }
 
 test "writeValue writes a string in quotes, Faultline's own values by what they are and the rest as Zig does" {

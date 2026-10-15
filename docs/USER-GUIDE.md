@@ -101,6 +101,11 @@ Type these after `zig build flt` on the command line, for example `zig build flt
 - `-Dreplay="<token>"` reproduces a failure Faultline already reported.
 - `-Djobs=<n>` sets how many workers run at once. By default there is one per processor core. The report is the same whatever the number.
 
+Type these after `--`, for example `zig build flt -- --full-report`:
+
+- `--full-report` prints a block for every source file with a line for every function: whether all its code paths were exercised, how many and how many calls were made. Without it the run prints the totals and the checklist only.
+- `--no-cache` executes every file and keeps no results (see below).
+
 ## Step 4: Run Faultline
 
 ```sh
@@ -113,7 +118,7 @@ Faultline prints a checklist of what you need to do have it exercise every code 
 
 Faultline does not execute again code an earlier run already proved and that is unchanged since. It keeps the complete result of every source file and sim file in your build's cache: every call's count, every failure and which code paths were exercised. A later run loads a file's result from the cache when that file, everything it imports, its sim file, every `global.sim.zig` and Faultline itself are all unchanged, and so is every file whose calls exercised its code paths. Every other file is executed, and so is every file whose calls exercised the code paths of a file that is executed. The report is the same as the run that made the result printed, so a run whose results all come from the cache returns in a moment.
 
-The run says how many files' results it loaded, and the block of each source file whose result came from the cache says so in its heading:
+The run says how many files' results it loaded. With `--full-report` (below), the block of each source file whose result came from the cache says so in its heading:
 
 ```
   Loaded the results of 2 source files and 1 sim file from the cache. Neither they nor anything they depend on changed since the run that proved them, so they were not executed again.
@@ -274,9 +279,12 @@ The context gives a scenario:
 - `context.faults`: the failures Faultline can inject, so a scenario can ask for one at a chosen place.
 - `context.io`: a `std.Io` whose filesystem and network are simulated in memory. Faultline makes them fail as listed in `FAILURES.md`.
 - `context.allocator`: an allocator Faultline can make fail.
+- `context.writer`: a writer Faultline can make fail at any write, for code that writes its output.
 - `context.expect(@src(), condition, "what you expected")`: an expectation, as in a unit test. If the condition is false, the expectation fails and Faultline reports it.
 
-A scenario that returns an error has not failed. Your code returns errors when Faultline injects failures, so only a false expectation fails a scenario.
+Faultline runs a scenario the way it calls a function: once with no failure injected, then once for each failure at each place that run reached. So a scenario that writes files and then calls your code exercises the code that handles each of those files failing, as a call does.
+
+A scenario that returns an error has not failed. Your code returns errors when Faultline injects failures, so only a false expectation fails a scenario, and only in the run with no failure injected. With a failure injected, an expectation that does not hold is not reported, because the failure is what changed the result. A crash or a call that never returns is reported in any run.
 
 ## Step 8: Write expectation functions to check expectations after every call
 

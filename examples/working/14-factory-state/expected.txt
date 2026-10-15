@@ -2,11 +2,6 @@ Fault testing the Zig source in 14-factory-state.
 
   Read 1 source file, with 1 function to exercise.
 
-Fault testing
-
-  feed.zig
-    ok   total                            2/2 code paths
-
   Found 1 source file, called 1 function and exercised 2 of 2 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 

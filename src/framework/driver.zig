@@ -961,12 +961,23 @@ fn report(
     failures: []const worker.Failure,
     elapsed_nanoseconds: i96,
 ) !u8 {
-    output_mod.print("\nFault testing\n", .{});
-
-    // A block per file with a line per function, in the order the files and functions are in.
+    // With `--full-report`, a block per file with a line per function, in the order the files and
+    // functions are in. Without it only the totals below are printed, because a line per function
+    // says nothing the totals and the checklist do not for a project of any size.
+    if (args.full_report) {
+        output_mod.print("\nFault testing\n", .{});
+    }
     var previous_file: []const u8 = "";
     var exercised_functions: usize = 0;
     for (checklists) |one| {
+        const standing = standingOf(Subject, standings, one.file, one.function);
+        const was_called = standing != null and standing.?.was_called;
+        if (was_called) {
+            exercised_functions += 1;
+        }
+        if (!args.full_report) {
+            continue;
+        }
         if (!std.mem.eql(u8, previous_file, one.file)) {
             if (cache.isLoaded(one.file)) {
                 output_mod.print("\n  {s} (from the cache)\n", .{one.file});
@@ -977,10 +988,8 @@ fn report(
         }
         const ticked = one.tickedCount();
         const total = one.provableCount();
-        const standing = standingOf(Subject, standings, one.file, one.function);
         const mark = if (one.allTicked()) style.pass() else style.miss();
-        if (standing != null and standing.?.was_called) {
-            exercised_functions += 1;
+        if (was_called) {
             output_mod.print("    {s} {s: <32} {d}/{d} code paths, {d} calls\n", .{ mark, one.function, ticked, total, standing.?.calls });
         } else if (standing != null and !one.allTicked()) {
             output_mod.print("    {s} {s: <32} {d}/{d} code paths, never called\n", .{ mark, one.function, ticked, total });

@@ -71,6 +71,9 @@ pub const Args = struct {
     // every key of the results cache so a different Faultline never uses another's results.
     cache_salt: []const u8 = "",
 
+    // Whether to print a line for every function of every file, and not only the totals.
+    full_report: bool = false,
+
     // Whether to run without the results cache: every file is run and no result is kept.
     no_cache: bool = false,
 
@@ -96,6 +99,8 @@ pub fn parse(arguments: []const []const u8) ParseError!Args {
             parsed.worker = true;
         } else if (std.mem.eql(u8, option, "--no-color")) {
             parsed.no_color = true;
+        } else if (std.mem.eql(u8, option, "--full-report")) {
+            parsed.full_report = true;
         } else if (std.mem.eql(u8, option, "--no-cache")) {
             parsed.no_cache = true;
         } else if (std.mem.eql(u8, option, "--trace")) {

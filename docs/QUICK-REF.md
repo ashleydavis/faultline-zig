@@ -40,6 +40,8 @@ Faultline exits 1 below 100% coverage and 0 at 100%.
 
 Faultline keeps each file's result in your build's cache and does not execute again code that is unchanged since the run that proved it. The report says which files' results came from the cache. `zig build flt -- --no-cache` executes every file, and `zig build flt clear` throws the kept results away.
 
+`zig build flt -- --full-report` also prints a line for every function of every file.
+
 Faultline keeps the replay token of every call that has crashed in `.zig-cache/flt-crashes.txt` and replays them all at the start of every run, so a crash is never lost to a seed that does not reach it. `--no-cache` and `clear` leave them alone.
 
 ## 5. Read the report
@@ -93,7 +95,7 @@ pub fn runPngHeaderScenario(context: *sim.ScenarioContext) anyerror!void {
 }
 ```
 
-Copy the parameter exactly and make the function `pub`. Faultline recognises a scenario by its parameter, `*sim.ScenarioContext`. The function can have any name. The context holds `faults`, `io`, `allocator` and `expect`.
+Copy the parameter exactly and make the function `pub`. Faultline recognises a scenario by its parameter, `*sim.ScenarioContext`. The function can have any name. The context holds `faults`, `io`, `allocator`, `writer` and `expect`.
 
 ## 8. Write an expectation function to check expectations after every call
 
@@ -113,12 +115,14 @@ Value factories, scenarios and expectation functions go in a sim file beside the
 
 - For a parameter that takes an error set, such as `anyerror`, a value factory returns the error itself (`pub fn missingFile() anyerror { return error.FileNotFound; }`). Faultline calls the function with an error of its own first and then with each factory's error.
 - Re-exports are banned in `.sim.zig` files, including another sim file's value factory (`pub const name = other_sim.name;`).
+- Value factories don't have side effects. If you find yourself adding side effects to value factories, such as writing files, it probably means you want a scenario.
 - A value factory that returns a pointer, or a value holding pointers, creates what they point at with the allocator Faultline passes to it. Do not keep any of it in file-level variables or constants. Memory from that allocator lasts as long as the call.
 - Put the value and everything it points at in one struct and create that with one `allocator.create`, rather than one `create` per piece.
 - Build the value with the type's own constructor when it has one. Add a constructor only when building the value takes more than filling in its fields: a struct literal that only sets fields stays a struct literal.
 
 ## How to write a scenario
 
-- When a value factory can exercise the code path, write the factory and not a scenario. Faultline calls the function with the factory's value and injects every failure into that call, which a scenario does not get.
+- When a value factory can exercise the code path, write the factory and not a scenario. A scenario is for a code path that needs the world laid out first, such as files written, before the call.
+- Faultline runs a scenario once with no failure injected, then once for each failure at each place that run reached, as it does a call. With a failure injected, an expectation in the scenario that does not hold is not reported, because the failure is what changed the result. A crash or a hang still is.
 - Once a type has a value factory in a sim file, Faultline uses only those factories for it in the functions of the file beside that sim file. Write one for every value it was exercised with before as well.
 - Put the call on a line of its own and keep its result in a variable. Test the result in the expectation with `std.meta.isError(result)`, rather than writing `if (...) |_| ... else |err| ...` on one line.

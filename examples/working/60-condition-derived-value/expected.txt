@@ -2,12 +2,6 @@ Fault testing the Zig source in 60-condition-derived-value.
 
   Read 1 source file, with 2 functions to exercise.
 
-Fault testing
-
-  threshold.zig
-    ok   unlocks                          3/3 code paths
-    ok   isMagic                          3/3 code paths
-
   Found 1 source file, called 2 functions and exercised 6 of 6 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 

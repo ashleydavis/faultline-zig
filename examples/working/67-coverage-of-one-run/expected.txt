@@ -2,14 +2,6 @@ Fault testing the Zig source in 67-coverage-of-one-run.
 
   Read 2 source files, with 2 functions to exercise.
 
-Fault testing
-
-  caller.zig
-    ok   nameIn                           1/1 code paths
-
-  lookup.zig
-    ok   find                             3/3 code paths
-
   Found 2 source files, called 1 function and exercised 4 of 4 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 

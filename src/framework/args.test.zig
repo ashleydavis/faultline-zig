@@ -12,6 +12,7 @@ test "no arguments gives every default" {
     try std.testing.expect(parsed.results_cache == null);
     try std.testing.expect(parsed.crashes == null);
     try std.testing.expect(!parsed.no_cache);
+    try std.testing.expect(!parsed.full_report);
 }
 
 test "every option that takes a value is read" {
@@ -49,9 +50,10 @@ test "every option that takes a value is read" {
 }
 
 test "the flags that take no value are read" {
-    const parsed = try args.parse(&.{ "--worker", "--no-color", "--no-cache" });
+    const parsed = try args.parse(&.{ "--worker", "--no-color", "--no-cache", "--full-report" });
 
     try std.testing.expect(parsed.worker);
+    try std.testing.expect(parsed.full_report);
     try std.testing.expect(parsed.no_color);
     try std.testing.expect(parsed.no_cache);
 }

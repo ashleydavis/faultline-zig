@@ -2,14 +2,6 @@ Fault testing the Zig source in 66-global-factory.
 
   Read 2 source files, with 2 functions to exercise.
 
-Fault testing
-
-  reader.zig
-    ok   firstOf                          3/3 code paths
-
-  store.zig
-    ok   valueFor                         3/3 code paths
-
   Found 2 source files, called 2 functions and exercised 6 of 6 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 

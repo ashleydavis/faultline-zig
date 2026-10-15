@@ -443,7 +443,7 @@ fi
 if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     ONE_RUN_DIR="$REPO_DIR/examples/working/67-coverage-of-one-run"
     ONE_RUN_OUTPUT="$RESULT_DIR/coverage-of-one-run.txt"
-    (cd "$ONE_RUN_DIR" && NO_COLOR=1 "$ZIG" build flt -Dfile=caller.zig >/dev/null 2>&1; NO_COLOR=1 "$ZIG" build flt -Dfile=lookup.zig >"$ONE_RUN_OUTPUT" 2>&1)
+    (cd "$ONE_RUN_DIR" && NO_COLOR=1 "$ZIG" build flt -Dfile=caller.zig >/dev/null 2>&1; NO_COLOR=1 "$ZIG" build flt -Dfile=lookup.zig -- --full-report >"$ONE_RUN_OUTPUT" 2>&1)
     if grep -q "find .*0/3 code paths, never called" "$ONE_RUN_OUTPUT"; then
         printf '  %spass%s  coverage of one run only\n' "$GREEN" "$RESET"
     else
@@ -507,8 +507,8 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     # paths come from another file's result, and the run prints what the run that proved it did.
     CACHED_DIR="$(copy_example 67-coverage-of-one-run cached-everything)"
     (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt clear >"$RESULT_DIR/cached-clear.txt" 2>&1)
-    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/cached-first.txt" 2>&1)
-    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/cached-second.txt" 2>&1)
+    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt -- --full-report >"$RESULT_DIR/cached-first.txt" 2>&1)
+    (cd "$CACHED_DIR" && NO_COLOR=1 "$ZIG" build flt -- --full-report >"$RESULT_DIR/cached-second.txt" 2>&1)
     without_cache_lines < "$RESULT_DIR/cached-first.txt" > "$RESULT_DIR/cached-first.compared"
     without_cache_lines < "$RESULT_DIR/cached-second.txt" > "$RESULT_DIR/cached-second.compared"
     if grep -q "^Cleared the results Faultline kept of earlier runs" "$RESULT_DIR/cached-clear.txt" &&
@@ -540,7 +540,7 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
     CHANGED_DIR="$(copy_example 41-individual-file cached-one-changed)"
     (cd "$CHANGED_DIR" && NO_COLOR=1 "$ZIG" build flt clear >/dev/null 2>&1; NO_COLOR=1 "$ZIG" build flt >/dev/null 2>&1)
     echo "// A change since the run that kept this file's result." >> "$CHANGED_DIR/pending.zig"
-    (cd "$CHANGED_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/cached-one-changed.txt" 2>&1)
+    (cd "$CHANGED_DIR" && NO_COLOR=1 "$ZIG" build flt -- --full-report >"$RESULT_DIR/cached-one-changed.txt" 2>&1)
     if grep -q "^  counting.zig (from the cache)$" "$RESULT_DIR/cached-one-changed.txt" &&
         grep -q "^  pending.zig$" "$RESULT_DIR/cached-one-changed.txt"; then
         printf '  %spass%s  a changed file is executed again and an unchanged one is not\n' "$GREEN" "$RESET"

@@ -2,11 +2,6 @@ Fault testing the Zig source in 64-expectation-after-scenario.
 
   Read 1 source file, with 1 function to exercise.
 
-Fault testing
-
-  notes.zig
-    ok   save                             1/1 code paths
-
   Found 1 source file, called 1 function and exercised 1 of 1 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 

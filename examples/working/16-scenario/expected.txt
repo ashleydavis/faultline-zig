@@ -2,12 +2,6 @@ Fault testing the Zig source in 16-scenario.
 
   Read 1 source file, with 2 functions to exercise.
 
-Fault testing
-
-  lock.zig
-    ok   take                             3/3 code paths
-    ok   release                          1/1 code paths
-
   Found 1 source file, called 2 functions and exercised 4 of 4 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 

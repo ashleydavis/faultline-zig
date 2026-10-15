@@ -18,6 +18,7 @@ const call_mod = @import("call.zig");
 const call_specs = @import("call_specs.zig");
 const condition = @import("condition.zig");
 const functions_mod = @import("functions.zig");
+const injector_mod = @import("injector.zig");
 const isolate = @import("isolate.zig");
 const locators = @import("locators.zig");
 
@@ -101,8 +102,8 @@ pub const ScenarioEntry = struct {
     // The name the scenario is declared with.
     name: []const u8,
 
-    // Runs the scenario in a child process.
-    attempt: *const fn (allocator: std.mem.Allocator, real_io: std.Io, seed: u64, limits: isolate.Limits) anyerror!isolate.Attempt,
+    // Runs the scenario in a child process, with the failures in `plan` injected.
+    attempt: *const fn (allocator: std.mem.Allocator, real_io: std.Io, seed: u64, plan: []const injector_mod.Injection, limits: isolate.Limits) anyerror!isolate.Attempt,
 };
 
 // Stands in for the listing and the call of a function that cannot be called.
@@ -281,8 +282,8 @@ pub fn Project(comptime files: anytype) type {
         ) ScenarioEntry {
             const Runner = call_mod.Scenario(name, function, expectations);
             const Wrapper = struct {
-                fn attempt(allocator: std.mem.Allocator, real_io: std.Io, seed: u64, limits: isolate.Limits) anyerror!isolate.Attempt {
-                    return isolate.attempt(allocator, Runner.Child{ .real_io = real_io, .seed = seed }, limits);
+                fn attempt(allocator: std.mem.Allocator, real_io: std.Io, seed: u64, plan: []const injector_mod.Injection, limits: isolate.Limits) anyerror!isolate.Attempt {
+                    return isolate.attempt(allocator, Runner.Child{ .real_io = real_io, .seed = seed, .plan = plan }, limits);
                 }
             };
             return .{ .file = path, .name = name, .attempt = Wrapper.attempt };

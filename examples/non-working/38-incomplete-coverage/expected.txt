@@ -2,12 +2,6 @@ Fault testing the Zig source in 38-incomplete-coverage.
 
   Read 1 source file, with 2 functions to exercise.
 
-Fault testing
-
-  rounding.zig
-    ok   checksum                         1/1 code paths
-    MISS upTo                             6/7 code paths
-
   Found 1 source file, called 2 functions and exercised 7 of 8 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 

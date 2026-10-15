@@ -21,11 +21,6 @@ Fault testing the Zig source in this directory.
 
   Read 2 source files, with 3 functions to exercise.
 
-Fault testing
-
-  format.zig
-    ok   formatFileSize                     9/9 code paths, 120 calls
-
   Found 2 source files, tested 1, exercised 3 functions and executed 9 of 9 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
 
@@ -51,11 +46,6 @@ $ zig build flt
 Fault testing the Zig source in this directory.
 
   Read 2 source files, with 1 function to exercise.
-
-Fault testing
-
-  gateway.zig
-    MISS opens                              2/3 code paths
 
   Found 1 source file, tested 1, exercised 1 function and executed 2 of 3 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
@@ -91,11 +81,6 @@ $ zig build flt
 Fault testing the Zig source in this directory.
 
   Read 2 source files, with 2 functions to exercise.
-
-Fault testing
-
-  store.zig
-    MISS valueFor                           0/3 code paths, never called
 
   Found 1 source file, tested 1, exercised 2 functions and executed 1 of 4 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.
@@ -257,11 +242,6 @@ $ zig build flt
 Fault testing the Zig source in this directory.
 
   Read 2 source files, with 1 function to exercise.
-
-Fault testing
-
-  rounding.zig
-    MISS upTo                               6/7 code paths
 
   Found 1 source file, tested 1, exercised 1 function and executed 6 of 7 code paths.
   Every call ran against a simulated filesystem and network, with every failure injected at every call that could fail that way.

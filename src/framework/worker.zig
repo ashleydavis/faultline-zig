@@ -544,6 +544,8 @@ const Executor = struct {
     }
 };
 
+// Runs one scenario the way a function is called: once with no failure injected, then once for
+// each failure that can happen at each place a run reached (see `explore.zig`).
 fn runScenario(
     allocator: std.mem.Allocator,
     room: std.mem.Allocator,
@@ -553,22 +555,67 @@ fn runScenario(
     index: usize,
     failures: *std.ArrayList(Failure),
 ) !void {
-    var attempt = try entry.attempt(allocator, real_io, options.seed, options.limits);
-    defer attempt.deinit(allocator);
-    reportProgress(entry.file, entry.name);
-    var report = try wire.read(allocator, attempt.output);
-    defer report.deinit();
-
-    const token_plan: plan_mod.Plan = .{
-        .file = entry.file,
-        .function = entry.name,
-        .seed = options.seed,
-        .choices = &.{},
-        .injections = &.{},
+    var executor: ScenarioExecutor = .{
+        .allocator = allocator,
+        .room = room,
+        .real_io = real_io,
+        .options = options,
+        .entry = entry,
+        .index = index,
+        .failures = failures,
     };
-    const token = try std.fmt.allocPrint(room, "{f}", .{token_plan});
-    try keepFailure(room, failures, true, index, token, attempt, report);
+    defer executor.deinit();
+    _ = try explore.explore(allocator, &executor, explore.max_injections_per_call);
 }
+
+// Makes the runs of one scenario for `explore.zig`: each in a child of its own, with the failures in
+// its plan injected, keeping what failed.
+const ScenarioExecutor = struct {
+    allocator: std.mem.Allocator,
+    room: std.mem.Allocator,
+    real_io: std.Io,
+    options: Options,
+    entry: project.ScenarioEntry,
+    index: usize,
+    failures: *std.ArrayList(Failure),
+
+    // What the last run reported, kept until the next run so the places it names stay valid.
+    last: ?wire.Report = null,
+
+    fn deinit(self: *ScenarioExecutor) void {
+        if (self.last) |*report| {
+            report.deinit();
+        }
+    }
+
+    pub fn call(self: *ScenarioExecutor, plan: []const injector.Injection) anyerror!explore.Observed {
+        if (self.last) |*report| {
+            report.deinit();
+            self.last = null;
+        }
+        const token_plan: plan_mod.Plan = .{
+            .file = self.entry.file,
+            .function = self.entry.name,
+            .seed = self.options.seed,
+            .choices = &.{},
+            .injections = plan,
+        };
+        const token = try std.fmt.allocPrint(self.room, "{f}", .{token_plan});
+        var attempt = try self.entry.attempt(self.allocator, self.real_io, self.options.seed, plan, self.options.limits);
+        defer attempt.deinit(self.allocator);
+        reportProgress(self.entry.file, self.entry.name);
+
+        var report = try wire.read(self.allocator, attempt.output);
+        errdefer report.deinit();
+        try keepFailure(self.room, self.failures, true, self.index, token, attempt, report);
+
+        const is_dead_end = !attempt.isClean() or report.result == null;
+        self.last = report;
+        return .{ .is_dead_end = is_dead_end, .places = report.places };
+    }
+
+    pub fn seen(_: *ScenarioExecutor, _: []const injector.Injection, _: explore.Observed) void {}
+};
 
 // Adds a failure to the list when the call that made `attempt` and `report` failed, and says
 // nothing about one that has already been kept.

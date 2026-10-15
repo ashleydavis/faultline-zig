@@ -273,30 +273,40 @@ fn runExpectations(session: *session_mod.Session, comptime expectations: anytype
 
 // What the child process runs for one scenario.
 //
-// A scenario runs in a world with no failures unless it asks for one, and its own expectations
-// decide whether it passed. The expectation functions of its sim file run after it.
+// A scenario runs with the failures in `plan` injected, as a function call does, and reports the
+// places it reached so each failure that can happen at each of them is tried in a run of its own.
+// With no failure injected, its own expectations decide whether it passed. With one injected, an
+// expectation of its own that does not hold is not reported, because the injected failure is what
+// changed the result; a crash or a call that never returns still is. The expectation functions of
+// its sim file run after it either way.
 pub fn Scenario(comptime name: []const u8, comptime function: anytype, comptime expectations: anytype) type {
     return struct {
         pub const Child = struct {
             real_io: std.Io,
             seed: u64,
 
+            // The failures to inject. Empty for the run that injects none.
+            plan: []const injector_mod.Injection = &.{},
+
             pub fn run(self: Child, out: *std.Io.Writer) void {
                 var session: session_mod.Session = .{ .injector = undefined };
-                session.begin(std.heap.page_allocator, self.real_io, &.{}, self.seed) catch {
+                session.begin(std.heap.page_allocator, self.real_io, self.plan, self.seed) catch {
                     wire.write(out, .{ .errored = "TheWorldCouldNotBeBegun" }, &.{}) catch {};
                     return;
                 };
+                defer session.end();
                 var faults: sim.Faults = .{};
                 var context: sim.ScenarioContext = .{
                     .faults = &faults,
                     .io = session.io,
                     .allocator = session.allocator(),
+                    .writer = &session.writer.interface,
                 };
 
                 var outcome: wire.Result = .returned;
                 function(&context) catch |err| {
-                    if (context.failed) |failed| {
+                    if (context.failed != null and self.plan.len == 0) {
+                        const failed = context.failed.?;
                         outcome = .{ .expectation_failed = .{
                             .function = name,
                             .file = failed.file,
@@ -308,9 +318,17 @@ pub fn Scenario(comptime name: []const u8, comptime function: anytype, comptime 
                     }
                 };
 
+                // The places are copied before the expectation functions run, because they use the
+                // world too and their calls are not places the scenario reached.
+                const reached = std.heap.page_allocator.dupe(injector_mod.Place, session.places()) catch &.{};
+                defer {
+                    if (reached.len != 0) {
+                        std.heap.page_allocator.free(reached);
+                    }
+                }
                 session.injector.plan = &.{};
                 const final = runExpectations(&session, expectations, outcome);
-                wire.write(out, final, &.{}) catch {};
+                wire.write(out, final, reached) catch {};
             }
         };
     };

@@ -84,7 +84,7 @@ pub fn run(
         if (!std.mem.eql(u8, entry.file, plan.file) or !std.mem.eql(u8, entry.name, plan.function)) {
             continue;
         }
-        var attempt = try entry.attempt(allocator, real_io, plan.seed, options.limits);
+        var attempt = try entry.attempt(allocator, real_io, plan.seed, plan.injections, options.limits);
         defer attempt.deinit(allocator);
         return try verdictOf(allocator, room, true, index, token_text, attempt, options.keeps_whole_complaint);
     }

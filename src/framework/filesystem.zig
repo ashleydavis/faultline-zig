@@ -1913,11 +1913,20 @@ fn openExecutable(userdata: ?*anyopaque, options: Dir.OpenFileOptions) std.proce
 // The ids of the rows for a call that reads or changes the current directory.
 const current_directory_ids = [_][]const u8{ "current_directory_was_deleted", "path_too_long" };
 
+// The ids for reading the current directory into a buffer as large as any path. No path is too
+// long for that buffer, and `std.process.currentPathAlloc` reads into one and treats the error as
+// one that cannot happen, so it is not offered.
+const current_directory_deleted_ids = [_][]const u8{"current_directory_was_deleted"};
+
 // Writes the path of the current directory into `buffer`.
 fn currentPath(userdata: ?*anyopaque, buffer: []u8) std.process.CurrentPathError!usize {
     _ = userdata;
     prepare();
-    if (faults.failWith(.current_directory, std.process.CurrentPathError, &current_directory_ids)) |err| {
+    const failure = if (buffer.len >= std.fs.max_path_bytes)
+        faults.failWith(.current_directory, std.process.CurrentPathError, &current_directory_deleted_ids)
+    else
+        faults.failWith(.current_directory, std.process.CurrentPathError, &current_directory_ids);
+    if (failure) |err| {
         return err;
     }
     const path = try tree.pathOf(tree.currentDirectory(), buffer) orelse {

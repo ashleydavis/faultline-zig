@@ -1,11 +1,15 @@
 const std = @import("std");
 const sim = @import("sim.zig");
 
+// The writer the contexts below hold. These tests never write to it.
+var unused_writer: std.Io.Writer = .failing;
+
 fn contextFor(faults: *sim.Faults) sim.ScenarioContext {
     return .{
         .faults = faults,
         .io = std.testing.io,
         .allocator = std.testing.allocator,
+        .writer = &unused_writer,
     };
 }
 

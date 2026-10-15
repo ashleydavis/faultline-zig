@@ -37,6 +37,9 @@ pub const ScenarioContext = struct {
     // An allocator Faultline can make fail.
     allocator: std.mem.Allocator,
 
+    // A writer Faultline can make fail at any write, the one it gives a call that takes a writer.
+    writer: *std.Io.Writer,
+
     // The expectation that was false, when one was. Faultline reads it after the scenario returns.
     failed: ?Expectation = null,
 
