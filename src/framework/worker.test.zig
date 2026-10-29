@@ -143,6 +143,34 @@ test "results written as text read back with their text intact" {
     try std.testing.expectEqual(worker.FailureKind.expectation, read.failures[0].kind);
 }
 
+test "a failure written on a line of its own reads back after its tag" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const failure: worker.Failure = .{ .is_scenario = true, .index = 3, .kind = .expectation, .token = "a.sim.zig:check;seed=1", .expectation_function = "holds", .file = "a.sim.zig", .line = 12, .text = "a\tb" };
+    var text: std.Io.Writer.Allocating = .init(arena.allocator());
+    try worker.writeFailure(&text.writer, "R", failure);
+
+    try std.testing.expect(std.mem.startsWith(u8, text.written(), "R\t"));
+    try std.testing.expect(std.mem.endsWith(u8, text.written(), "\n"));
+    var fields = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text.written(), "\n"), '\t');
+    try std.testing.expectEqualStrings("R", fields.next().?);
+    const read = (try worker.parseFailure(arena.allocator(), &fields)).?;
+    try std.testing.expect(read.is_scenario);
+    try std.testing.expectEqual(@as(usize, 3), read.index);
+    try std.testing.expectEqual(worker.FailureKind.expectation, read.kind);
+    try std.testing.expectEqualStrings("a.sim.zig:check;seed=1", read.token);
+    try std.testing.expectEqualStrings("holds", read.expectation_function);
+    try std.testing.expectEqual(@as(u32, 12), read.line);
+    try std.testing.expectEqualStrings("a\tb", read.text);
+}
+
+test "a failure's fields that stop short do not read" {
+    var fields = std.mem.splitScalar(u8, "function\t3\tcrash", '\t');
+    try std.testing.expectEqual(@as(?worker.Failure, null), try worker.parseFailure(std.testing.allocator, &fields));
+    var kind = std.mem.splitScalar(u8, "function\t3\tunheard-of\t0\tt\t\t\t\t0\t", '\t');
+    try std.testing.expectEqual(@as(?worker.Failure, null), try worker.parseFailure(std.testing.allocator, &kind));
+}
+
 test "a function that calls the allocator is called once for each failure it can have" {
     const items = [_]worker.WorkItem{.{ .function = .{ .index = indexOf("allocates"), .phase = .normal } }};
 

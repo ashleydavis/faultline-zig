@@ -147,6 +147,12 @@ Each run picks its values from a new seed, so a call that crashed on one run may
   Replayed 1 kept crash, 1 still fails.
 ```
 
+- A kept crash of a file that has not changed since its call was last made, judged as the results cache judges a file, is not replayed: its answer is kept with the file's result and the run takes it from there, and the line says how many were read from the cache:
+
+```
+  Read 1 kept crash from the cache, 1 still fails.
+```
+
 - A token stays in the file after its crash is fixed, so the crash is found again if it comes back.
 - A crash a run finds again with only a new seed is not added a second time, unless one of its values was drawn from the seed.
 - A token that no longer names a call of your project, because its function is gone or its values can no longer be built, is dropped and the run says why.

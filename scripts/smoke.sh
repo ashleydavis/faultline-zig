@@ -557,6 +557,19 @@ if [ -z "$ONLY" ] && [ -z "$SHARD" ]; then
         printf '  %sFAIL%s  a crash one run finds is replayed by the next, after --no-cache and clear\n' "$RED" "$RESET"
         FAILED+=("non-working/36-crash-under-injection")
     fi
+
+    # A run that uses the cache keeps how it answered each kept crash with its file's result, so
+    # the run after it, with no file changed, reads every kept crash from the cache and replays
+    # none.
+    (cd "$CRASH_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/kept-crash-third.txt" 2>&1)
+    (cd "$CRASH_DIR" && NO_COLOR=1 "$ZIG" build flt >"$RESULT_DIR/kept-crash-fourth.txt" 2>&1)
+    if ! grep -q "^  Replayed " "$RESULT_DIR/kept-crash-fourth.txt" &&
+        grep -Eq "^  Read [0-9]+ kept crash(es)? from the cache, [1-9][0-9]* still fails?\.$" "$RESULT_DIR/kept-crash-fourth.txt"; then
+        printf '  %spass%s  a kept crash of a file that has not changed is read from the cache and not replayed\n' "$GREEN" "$RESET"
+    else
+        printf '  %sFAIL%s  a kept crash of a file that has not changed is read from the cache and not replayed\n' "$RED" "$RESET"
+        FAILED+=("non-working/36-crash-under-injection")
+    fi
 fi
 
 if [ "${#FAILED[@]}" -gt 0 ]; then

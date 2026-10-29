@@ -130,7 +130,8 @@ fn replayToken(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io,
                 defer environ_map.deinit();
                 const style = style_mod.Style.init(!args.no_color and environ_map.get("NO_COLOR") == null);
                 const command = try std.fmt.allocPrint(allocator, "zig build flt -Dreplay=\"{s}\"", .{token});
-                if (try crashViewOf(Subject, allocator, io, absolute, style, failure, command)) |view| {
+                const trace = try replayTrace(allocator, io, absolute, failure.token);
+                if (try crashViewOf(Subject, allocator, io, absolute, style, failure, command, trace)) |view| {
                     // The command was typed a moment ago and stands at the root of the trace, so
                     // it is not repeated.
                     output_mod.print("The replay failed.\n\n{s}", .{view});
@@ -295,11 +296,12 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
     }
     var record: run_cache.Record = .{};
 
-    // Every crash an earlier run found is replayed before any call of this run, whatever its seed,
-    // so a crash is never lost to a seed that does not reach it.
+    // Every crash an earlier run found is answered before any call of this run, whatever its seed,
+    // so a crash is never lost to a seed that does not reach it. One whose file has the key it had
+    // when its call was last made is answered from the cache; every other one is replayed.
     var kept_crashes: []const []const u8 = &.{};
     if (args.crashes) |path| {
-        kept_crashes = try replayKeptCrashes(Subject, allocator, io, args, selection, path, &failures);
+        kept_crashes = try replayKeptCrashes(Subject, allocator, io, args, selection, path, cache, &record, &failures);
     }
 
     try std.Io.Dir.cwd().createDirPath(io, args.kcov_output);
@@ -398,12 +400,16 @@ fn drive(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, init:
         try crash_store.write(allocator, io, path, try crash_store.withNew(allocator, kept_crashes, found.items));
     }
 
+    // The crash shown first is shown from a trace, which is found before the results are kept so
+    // the cache keeps it with them.
+    const first_trace = try firstTrace(Subject, allocator, io, args, cache, &record, failures.items);
+
     if (cache_directory) |directory| {
         try run_cache.store(Subject, allocator, io, directory, cache, &record, checklists.items);
     }
 
     const elapsed = started_at.durationTo(std.Io.Clock.Timestamp.now(io, .awake));
-    return report(Subject, allocator, io, args, style, cache, selected.items, checklists.items, standings, failures.items, elapsed.raw.nanoseconds);
+    return report(Subject, allocator, io, args, style, cache, selected.items, checklists.items, standings, failures.items, first_trace, elapsed.raw.nanoseconds);
 }
 
 // Runs one pass: splits its work into shards (see `shards.zig`), runs a worker under kcov for each,
@@ -747,20 +753,44 @@ pub fn hasUntickedPath(checklists: []const coverage.Checklist, file: []const u8,
     return false;
 }
 
-// The view of a crash (`crash_view.zig`): where it happened, the code, the callers and a hint. It
-// replays the call once more, in a program of its own that writes the stack trace, which the calls
-// of a run never do because it is slow. Null when the replay did not crash or its trace has no
-// frame to show.
-fn crashViewOf(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, args: args_mod.Args, style: style_mod.Style, failure: worker.Failure, command: []const u8) !?[]const u8 {
+// What a replay of the crash `token` wrote, its stack trace included: the call made once more, in a
+// program of its own that writes the trace, which the calls of a run never do because it is slow.
+// Null when the program could not be run.
+fn replayTrace(allocator: std.mem.Allocator, io: std.Io, args: args_mod.Args, token: []const u8) !?[]const u8 {
     const exe_path = try std.process.executablePathAlloc(io, allocator);
     const replayed = std.process.run(allocator, io, .{
-        .argv = &.{ exe_path, "--replay", failure.token, "--trace", "--sources-root", args.sources_root, "--repository", args.repository },
+        .argv = &.{ exe_path, "--replay", token, "--trace", "--sources-root", args.sources_root, "--repository", args.repository },
         // Far more than any trace a crash writes, which is a few lines for each frame.
         .stdout_limit = .limited(1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),
     }) catch return null;
     // Faultline writes what it prints on its error stream, and the trace goes with it.
-    const trace = try crash_view.parse(allocator, try std.mem.concat(allocator, u8, &.{ replayed.stdout, replayed.stderr }));
+    return try std.mem.concat(allocator, u8, &.{ replayed.stdout, replayed.stderr });
+}
+
+// The trace of the crash a run shows first, which its report makes the crash view from: the one
+// the cache kept for its token, when its file has the key it had when the trace was written, and
+// otherwise a new replay's. How it was found goes into `record`, so the cache keeps it. Null when
+// the first failure is no crash or no trace could be made.
+fn firstTrace(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, args: args_mod.Args, cache: run_cache.State, record: *run_cache.Record, failures: []const worker.Failure) !?[]const u8 {
+    if (failures.len == 0) {
+        return null;
+    }
+    const first = failures[0];
+    if (first.kind != .crash) {
+        return null;
+    }
+    const text = cache.traceOf(first.token) orelse (try replayTrace(allocator, io, args, first.token) orelse return null);
+    try record.addTrace(allocator, subjectFile(Subject, first), .{ .token = first.token, .text = text });
+    return text;
+}
+
+// The view of a crash (`crash_view.zig`) from `replay_text`, what a replay of it wrote: where it happened,
+// the code, the callers and a hint. Null when there is no text, or the replay did not crash or its
+// trace has no frame to show.
+fn crashViewOf(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, args: args_mod.Args, style: style_mod.Style, failure: worker.Failure, command: []const u8, replay_text: ?[]const u8) !?[]const u8 {
+    const written = replay_text orelse return null;
+    const trace = try crash_view.parse(allocator, written);
     if (trace.stack.len == 0) {
         return null;
     }
@@ -833,11 +863,14 @@ fn parametersOf(
     return parameters.items;
 }
 
-// Replays every crash kept in the file at `path` and adds each that still fails to `failures`,
-// unless a result from the cache already holds it. Gives back the tokens to keep: each one that
-// still names a call of the project, whether it still crashes or not, and each one outside the
-// run's `-Dfile` or `-Dfunction`, which is kept without being replayed. A token that no longer
-// names a call is dropped and the run says why.
+// Answers every crash kept in the file at `path` and adds each that still fails to `failures`,
+// unless a result from the cache already holds it. A crash with an answer in `cache` is answered
+// from it, because its file has the key it had when that answer was made and a replay would give
+// the same one; every other crash is replayed. How each was answered goes into `record`, so the
+// cache keeps it. Gives back the tokens to keep: each one that still names a call of the project,
+// whether it still crashes or not, and each one outside the run's `-Dfile` or `-Dfunction`, which
+// is kept without being answered. A token that no longer names a call is dropped and the run says
+// why.
 fn replayKeptCrashes(
     comptime Subject: type,
     allocator: std.mem.Allocator,
@@ -845,15 +878,30 @@ fn replayKeptCrashes(
     args: args_mod.Args,
     selection: selection_mod.Selection,
     path: []const u8,
+    cache: run_cache.State,
+    record: *run_cache.Record,
     failures: *std.ArrayList(worker.Failure),
 ) ![]const []const u8 {
     const tokens = try crash_store.read(allocator, io, path);
     var kept: std.ArrayList([]const u8) = .empty;
     var replayed: usize = 0;
+    var read: usize = 0;
     var still_failing: usize = 0;
     for (tokens) |token| {
         if (!isTokenSelected(allocator, selection, token)) {
             try kept.append(allocator, token);
+            continue;
+        }
+        if (cache.answerOf(token)) |answer| {
+            read += 1;
+            try kept.append(allocator, token);
+            if (answer.failure) |failure| {
+                still_failing += 1;
+                if (!hasFailureToken(failures.items, token)) {
+                    try failures.append(allocator, failure);
+                }
+            }
+            try record.addReplay(allocator, try fileOfToken(allocator, token), answer);
             continue;
         }
         const verdict = try replay_mod.run(Subject, allocator, allocator, io, .{
@@ -863,6 +911,7 @@ fn replayKeptCrashes(
             .passed => {
                 replayed += 1;
                 try kept.append(allocator, token);
+                try record.addReplay(allocator, try fileOfToken(allocator, token), .{ .token = token, .failure = null });
                 continue;
             },
             .failed => |failure| {
@@ -872,6 +921,7 @@ fn replayKeptCrashes(
                 if (!hasFailureToken(failures.items, token)) {
                     try failures.append(allocator, failure);
                 }
+                try record.addReplay(allocator, try fileOfToken(allocator, token), .{ .token = token, .failure = failure });
                 continue;
             },
             .not_found => "the function or scenario it names is no longer in the project",
@@ -880,15 +930,25 @@ fn replayKeptCrashes(
         };
         output_mod.print("  Dropped a kept crash, because {s}: {s}\n", .{ dropped_because, token });
     }
-    if (replayed != 0) {
-        output_mod.print("  Replayed {d} kept crash{s}, {d} still {s}.\n", .{
-            replayed,
-            if (replayed == 1) "" else "es",
-            still_failing,
-            if (still_failing == 1) "fails" else "fail",
-        });
+    const still = if (still_failing == 1) "fails" else "fail";
+    if (read == 0) {
+        if (replayed != 0) {
+            output_mod.print("  Replayed {d} kept crash{s}, {d} still {s}.\n", .{ replayed, if (replayed == 1) "" else "es", still_failing, still });
+        }
+    } else if (replayed == 0) {
+        output_mod.print("  Read {d} kept crash{s} from the cache, {d} still {s}.\n", .{ read, if (read == 1) "" else "es", still_failing, still });
+    } else {
+        output_mod.print("  Replayed {d} kept crash{s} and read {d} from the cache, {d} still {s}.\n", .{ replayed, if (replayed == 1) "" else "es", read, still_failing, still });
     }
     return kept.toOwnedSlice(allocator);
+}
+
+// The file a replay token names a call in. A token that replayed was one Faultline wrote, so it
+// reads.
+pub fn fileOfToken(allocator: std.mem.Allocator, token: []const u8) ![]const u8 {
+    var plan = try plan_mod.parse(allocator, token);
+    defer plan.deinit();
+    return allocator.dupe(u8, plan.file);
 }
 
 // Whether the run's `-Dfile` and `-Dfunction` take the call `token` names. A token that cannot be
@@ -958,6 +1018,7 @@ fn report(
     checklists: []coverage.Checklist,
     standings: []const Standing,
     failures: []const worker.Failure,
+    first_trace: ?[]const u8,
     elapsed_nanoseconds: i96,
 ) !u8 {
     // With `--full-report`, a block per file with a line per function, in the order the files and
@@ -1049,7 +1110,8 @@ fn report(
         const shown = @min(failures.len, failure_limit);
         for (failures[0..shown], 0..) |failure, position| {
             if (failure.kind == .crash) {
-                if (try crashViewOf(Subject, allocator, io, args, style, failure, "zig build flt")) |view| {
+                const trace = if (position == 0) first_trace else try replayTrace(allocator, io, args, failure.token);
+                if (try crashViewOf(Subject, allocator, io, args, style, failure, "zig build flt", trace)) |view| {
                     output_mod.print("{s}{s}\n", .{ if (position == 0) "" else "\n", view });
                     report_mod.printReplay(failure.token);
                     continue;

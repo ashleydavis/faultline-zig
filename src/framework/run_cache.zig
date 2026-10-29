@@ -1,7 +1,8 @@
 // Connects the results cache (`results_cache.zig`) to a run: works out the key of every file, reads
 // the results kept of earlier runs, decides which files run again, puts the result of each file
-// that does not into the run as if the run had found it, records what each file that runs finds,
-// and keeps that when the run ends.
+// that does not into the run as if the run had found it, gives the answers kept crashes already
+// have, records what each file that runs finds and how each kept crash was answered, and keeps
+// that when the run ends.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -28,6 +29,35 @@ pub const State = struct {
 
     // Parallel to `units`: whether the file runs in this run.
     to_run: []const bool = &.{},
+
+    // The answers kept crashes already have: the crashes of every file whose stored result has the
+    // key the file has now, whether or not that result is used, and the kept crashes that result
+    // answered. Each failure's index is into the run's tables.
+    answers: []const results_cache.Replay = &.{},
+
+    // The traces of the crashes of every file whose stored result has the key the file has now,
+    // which the crash view is made from.
+    traces: []const results_cache.Trace = &.{},
+
+    // The trace kept for the crash `token`, or null when it has to be replayed for one.
+    pub fn traceOf(self: State, token: []const u8) ?[]const u8 {
+        for (self.traces) |trace| {
+            if (std.mem.eql(u8, trace.token, token)) {
+                return trace.text;
+            }
+        }
+        return null;
+    }
+
+    // The answer `token` already has, or null when it has to be replayed.
+    pub fn answerOf(self: State, token: []const u8) ?results_cache.Replay {
+        for (self.answers) |answer| {
+            if (std.mem.eql(u8, answer.token, token)) {
+                return answer;
+            }
+        }
+        return null;
+    }
 
     // Whether the result of `file` came from the cache.
     pub fn isLoaded(self: State, file: []const u8) bool {
@@ -107,7 +137,59 @@ pub fn prepare(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io,
     return .{
         .units = units.items,
         .to_run = try results_cache.unitsToRun(allocator, units.items),
+        .answers = try answersOf(Subject, allocator, units.items),
+        .traces = try tracesOf(allocator, units.items),
     };
+}
+
+// The traces in the stored results of `units` made with the key each file has now.
+pub fn tracesOf(allocator: std.mem.Allocator, units: []const results_cache.Unit) ![]const results_cache.Trace {
+    var traces: std.ArrayList(results_cache.Trace) = .empty;
+    for (units) |unit| {
+        const entry = unit.entry orelse continue;
+        const key = unit.key orelse continue;
+        if (entry.key != key) {
+            continue;
+        }
+        try traces.appendSlice(allocator, entry.traces);
+    }
+    return traces.toOwnedSlice(allocator);
+}
+
+// The answers kept crashes have in the stored results of `units` made with the key each file has
+// now: every crash a result holds, which is the answer of the call its token names, and every kept
+// crash it answered. A result made with another key holds answers the file's code may no longer
+// give, so it gives none.
+pub fn answersOf(comptime Subject: type, allocator: std.mem.Allocator, units: []const results_cache.Unit) ![]const results_cache.Replay {
+    var answers: std.ArrayList(results_cache.Replay) = .empty;
+    for (units) |unit| {
+        const entry = unit.entry orelse continue;
+        const key = unit.key orelse continue;
+        if (entry.key != key) {
+            continue;
+        }
+        for (entry.failures) |failure| {
+            if (failure.kind != .crash) {
+                continue;
+            }
+            try answers.append(allocator, .{ .token = failure.token, .failure = inTables(Subject, entry.file, failure) });
+        }
+        for (entry.replays) |replay| {
+            try answers.append(allocator, .{
+                .token = replay.token,
+                .failure = if (replay.failure) |failure| inTables(Subject, entry.file, failure) else null,
+            });
+        }
+    }
+    return answers.toOwnedSlice(allocator);
+}
+
+// `failure` of `file`, kept with its index counted from the file's first function or scenario,
+// with its index into the run's tables.
+fn inTables(comptime Subject: type, file: []const u8, failure: worker.Failure) worker.Failure {
+    var placed = failure;
+    placed.index += if (failure.is_scenario) firstScenario(Subject, file) else firstFunction(Subject, file);
+    return placed;
 }
 
 // The result kept for `file`, or null when there is none or it cannot be read.
@@ -205,6 +287,31 @@ pub const Record = struct {
     // Per source file: the files whose workers ran any of its lines.
     contributors: std.StringArrayHashMapUnmanaged(std.StringArrayHashMapUnmanaged(void)) = .empty,
 
+    // Per file: how each of its kept crashes was answered in this run, replayed or already known,
+    // with indexes into the run's tables.
+    replays: std.StringArrayHashMapUnmanaged(std.ArrayList(results_cache.Replay)) = .empty,
+
+    // Per file: the trace of the crash this run shows first, when it is one of the file's.
+    traces: std.StringArrayHashMapUnmanaged(std.ArrayList(results_cache.Trace)) = .empty,
+
+    // Adds the trace of a crash of `file`.
+    pub fn addTrace(self: *Record, allocator: std.mem.Allocator, file: []const u8, trace: results_cache.Trace) !void {
+        const slot = try self.traces.getOrPut(allocator, file);
+        if (!slot.found_existing) {
+            slot.value_ptr.* = .empty;
+        }
+        try slot.value_ptr.append(allocator, trace);
+    }
+
+    // Adds how the kept crash of `file` with `replay.token` was answered.
+    pub fn addReplay(self: *Record, allocator: std.mem.Allocator, file: []const u8, replay: results_cache.Replay) !void {
+        const slot = try self.replays.getOrPut(allocator, file);
+        if (!slot.found_existing) {
+            slot.value_ptr.* = .empty;
+        }
+        try slot.value_ptr.append(allocator, replay);
+    }
+
     // Adds what the worker of `shard_file` found and which lines it ran.
     pub fn add(
         self: *Record,
@@ -247,12 +354,28 @@ pub const Findings = struct {
     failures: std.ArrayList(worker.Failure) = .empty,
 };
 
-// Keeps in `directory` the result of every file that ran and has a key. A source file one of whose
-// contributors has no key keeps none, because no later run could tell whether that file changed.
+// Keeps in `directory` the result of every file that ran and has a key, with how its kept crashes
+// were answered and the trace of its crash this run showed first. A source file one of whose
+// contributors has no key keeps none, because no later run could tell whether that file changed. A
+// file whose result came from the cache keeps that result, written again with what this run
+// recorded of it when it recorded anything.
 pub fn store(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, directory: []const u8, state: State, record: *const Record, checklists: []const coverage.Checklist) !void {
     try std.Io.Dir.cwd().createDirPath(io, directory);
     units: for (state.units, state.to_run) |unit, runs| {
         if (!runs) {
+            const answered = record.replays.get(unit.file);
+            const traced = record.traces.get(unit.file);
+            if (answered == null and traced == null) {
+                continue;
+            }
+            var loaded = unit.entry orelse continue;
+            if (answered) |list| {
+                loaded.replays = try keptReplays(Subject, allocator, unit.file, list.items);
+            }
+            if (traced) |list| {
+                loaded.traces = list.items;
+            }
+            try writeStored(allocator, io, directory, loaded);
             continue;
         }
         const key = unit.key orelse continue;
@@ -292,18 +415,38 @@ pub fn store(comptime Subject: type, allocator: std.mem.Allocator, io: std.Io, d
             }
         }
 
-        var text: std.Io.Writer.Allocating = .init(allocator);
-        try results_cache.writeEntry(&text.writer, .{
+        const answered = if (record.replays.get(unit.file)) |list| list.items else &.{};
+        try writeStored(allocator, io, directory, .{
             .file = unit.file,
             .key = key,
             .contributors = contributors.items,
             .marks = marks.items,
             .tallies = tallies,
             .failures = found,
+            .replays = try keptReplays(Subject, allocator, unit.file, answered),
+            .traces = if (record.traces.get(unit.file)) |list| list.items else &.{},
         });
-        const path = try results_cache.entryPath(allocator, directory, unit.file);
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text.written() });
     }
+}
+
+// Writes `entry` to its file under `directory`.
+fn writeStored(allocator: std.mem.Allocator, io: std.Io, directory: []const u8, entry: results_cache.Entry) !void {
+    var text: std.Io.Writer.Allocating = .init(allocator);
+    try results_cache.writeEntry(&text.writer, entry);
+    const path = try results_cache.entryPath(allocator, directory, entry.file);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text.written() });
+}
+
+// `replays` of `file` as a stored result keeps them: each failure's index counted from the file's
+// first function or scenario.
+fn keptReplays(comptime Subject: type, allocator: std.mem.Allocator, file: []const u8, replays: []const results_cache.Replay) ![]const results_cache.Replay {
+    const kept = try allocator.dupe(results_cache.Replay, replays);
+    for (kept) |*replay| {
+        if (replay.failure) |*failure| {
+            failure.index -= if (failure.is_scenario) firstScenario(Subject, file) else firstFunction(Subject, file);
+        }
+    }
+    return kept;
 }
 
 fn keyIn(state: State, file: []const u8) ?u64 {
@@ -355,4 +498,8 @@ fn scenarioCount(comptime Subject: type, file: []const u8) usize {
         }
     }
     return count;
+}
+
+test {
+    _ = @import("run_cache.test.zig");
 }

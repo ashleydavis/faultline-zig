@@ -773,23 +773,29 @@ pub fn writeFindings(writer: *std.Io.Writer, tallies: []const Tally, failures: [
         try writer.print("N\t{d}\t{d}\t{d}\t{d}\n", .{ tally.index, tally.calls, tally.specifications, @intFromBool(tally.is_cut_short) });
     }
     for (failures) |failure| {
-        try writer.print("X\t{s}\t{d}\t{s}\t{d}\t", .{
-            if (failure.is_scenario) "scenario" else "function",
-            failure.index,
-            @tagName(failure.kind),
-            failure.signal,
-        });
-        try wire.writeField(writer, failure.token);
-        try writer.writeByte('\t');
-        try wire.writeField(writer, failure.complaint);
-        try writer.writeByte('\t');
-        try wire.writeField(writer, failure.expectation_function);
-        try writer.writeByte('\t');
-        try wire.writeField(writer, failure.file);
-        try writer.print("\t{d}\t", .{failure.line});
-        try wire.writeField(writer, failure.text);
-        try writer.writeByte('\n');
+        try writeFailure(writer, "X", failure);
     }
+}
+
+// Writes `failure` as one line starting with `tag`, in the form `parseFailure` reads after the tag.
+pub fn writeFailure(writer: *std.Io.Writer, tag: []const u8, failure: Failure) std.Io.Writer.Error!void {
+    try writer.print("{s}\t{s}\t{d}\t{s}\t{d}\t", .{
+        tag,
+        if (failure.is_scenario) "scenario" else "function",
+        failure.index,
+        @tagName(failure.kind),
+        failure.signal,
+    });
+    try wire.writeField(writer, failure.token);
+    try writer.writeByte('\t');
+    try wire.writeField(writer, failure.complaint);
+    try writer.writeByte('\t');
+    try wire.writeField(writer, failure.expectation_function);
+    try writer.writeByte('\t');
+    try wire.writeField(writer, failure.file);
+    try writer.print("\t{d}\t", .{failure.line});
+    try wire.writeField(writer, failure.text);
+    try writer.writeByte('\n');
 }
 
 // Reads what `writeResults` wrote. A line that does not parse is passed over.
@@ -811,34 +817,41 @@ pub fn readResults(allocator: std.mem.Allocator, text: []const u8) !Results {
             const cut = parseNext(u8, &fields) orelse continue;
             try tallies.append(room, .{ .index = index, .calls = calls, .specifications = specifications, .is_cut_short = cut != 0 });
         } else if (std.mem.eql(u8, tag, "X")) {
-            const subject = fields.next() orelse continue;
-            const index = parseNext(usize, &fields) orelse continue;
-            const kind = std.meta.stringToEnum(FailureKind, fields.next() orelse continue) orelse continue;
-            const signal = parseNext(u32, &fields) orelse continue;
-            const token = try wire.unescape(room, fields.next() orelse continue);
-            const complaint = try wire.unescape(room, fields.next() orelse continue);
-            const function = try wire.unescape(room, fields.next() orelse continue);
-            const file = try wire.unescape(room, fields.next() orelse continue);
-            const line_number = parseNext(u32, &fields) orelse continue;
-            const text_field = try wire.unescape(room, fields.next() orelse continue);
-            try failures.append(room, .{
-                .is_scenario = std.mem.eql(u8, subject, "scenario"),
-                .index = index,
-                .kind = kind,
-                .token = token,
-                .signal = signal,
-                .complaint = complaint,
-                .expectation_function = function,
-                .file = file,
-                .line = line_number,
-                .text = text_field,
-            });
+            const failure = try parseFailure(room, &fields) orelse continue;
+            try failures.append(room, failure);
         }
     }
     return .{
         .tallies = try tallies.toOwnedSlice(room),
         .failures = try failures.toOwnedSlice(room),
         .arena = arena,
+    };
+}
+
+// Reads the fields `writeFailure` wrote after its tag, with the strings allocated from `room`. Null
+// when they do not parse.
+pub fn parseFailure(room: std.mem.Allocator, fields: *std.mem.SplitIterator(u8, .scalar)) !?Failure {
+    const subject = fields.next() orelse return null;
+    const index = parseNext(usize, fields) orelse return null;
+    const kind = std.meta.stringToEnum(FailureKind, fields.next() orelse return null) orelse return null;
+    const signal = parseNext(u32, fields) orelse return null;
+    const token = try wire.unescape(room, fields.next() orelse return null);
+    const complaint = try wire.unescape(room, fields.next() orelse return null);
+    const function = try wire.unescape(room, fields.next() orelse return null);
+    const file = try wire.unescape(room, fields.next() orelse return null);
+    const line_number = parseNext(u32, fields) orelse return null;
+    const text_field = try wire.unescape(room, fields.next() orelse return null);
+    return .{
+        .is_scenario = std.mem.eql(u8, subject, "scenario"),
+        .index = index,
+        .kind = kind,
+        .token = token,
+        .signal = signal,
+        .complaint = complaint,
+        .expectation_function = function,
+        .file = file,
+        .line = line_number,
+        .text = text_field,
     };
 }
 

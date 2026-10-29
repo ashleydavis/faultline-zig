@@ -14,6 +14,11 @@
 // files whose calls exercised its code paths, with their keys. The result is used only while
 // every one of them still has the key it had, and when a file is run again, so is every file that
 // exercised its code paths, so the file gets what they exercised in it again.
+//
+// Each result also holds the answer of every kept crash of its file a run answered while the file
+// had that key, and the trace of the crash a run showed first, which the crash view is made from. A replay depends on nothing outside the key, so a run in which the file still has
+// the key takes the answer from the result instead of replaying the crash, even when the file
+// itself runs again because a file that contributes to it changed.
 
 const std = @import("std");
 const module_table = @import("../cmd/module_table.zig");
@@ -22,7 +27,7 @@ const worker = @import("worker.zig");
 
 // What the first line of a stored result says. A result written by any other version of this
 // format is thrown away, so a change to the format never misreads an older result.
-pub const format_version: u32 = 1;
+pub const format_version: u32 = 2;
 
 // The word the first line starts with, so a file that is not a stored result is not read as one.
 const format_word = "faultline-results";
@@ -46,6 +51,25 @@ pub const Marks = struct {
     marks: []const u8,
 };
 
+// The answer of one kept crash: the failure its call found, or null when the call passed.
+pub const Replay = struct {
+    // The kept crash's replay token.
+    token: []const u8,
+
+    // What the call found. The index is counted from the file's first function or scenario in the
+    // table, as in `Entry.failures`.
+    failure: ?worker.Failure,
+};
+
+// What a replay of a crash wrote, its stack trace included, which the crash view is made from.
+pub const Trace = struct {
+    // The crash's replay token.
+    token: []const u8,
+
+    // What the replay wrote.
+    text: []const u8,
+};
+
 // The complete result of one file.
 pub const Entry = struct {
     // The file, relative to the project root.
@@ -65,6 +89,12 @@ pub const Entry = struct {
 
     // Its failures. The index is counted from the file's first function or scenario in the table.
     failures: []const worker.Failure = &.{},
+
+    // The answer of every kept crash of the file a run answered while the file had this key.
+    replays: []const Replay = &.{},
+
+    // The trace of every crash of the file a run showed first while the file had this key.
+    traces: []const Trace = &.{},
 };
 
 // Writes `entry` in the format `readEntry` reads.
@@ -84,6 +114,22 @@ pub fn writeEntry(writer: *std.Io.Writer, entry: Entry) !void {
         try writer.writeByte('\n');
     }
     try worker.writeFindings(writer, entry.tallies, entry.failures);
+    for (entry.replays) |replay| {
+        if (replay.failure) |failure| {
+            try worker.writeFailure(writer, "R", failure);
+        } else {
+            try writer.writeAll("P\t");
+            try wire.writeField(writer, replay.token);
+            try writer.writeByte('\n');
+        }
+    }
+    for (entry.traces) |trace| {
+        try writer.writeAll("T\t");
+        try wire.writeField(writer, trace.token);
+        try writer.writeByte('\t');
+        try wire.writeField(writer, trace.text);
+        try writer.writeByte('\n');
+    }
 }
 
 // Reads what `writeEntry` wrote, with everything in it allocated from `room`. Null for text that
@@ -104,6 +150,8 @@ pub fn readEntry(room: std.mem.Allocator, text: []const u8) !?Entry {
     var key: ?u64 = null;
     var contributors: std.ArrayList(Contributor) = .empty;
     var marks: std.ArrayList(Marks) = .empty;
+    var replays: std.ArrayList(Replay) = .empty;
+    var traces: std.ArrayList(Trace) = .empty;
     var rest: std.Io.Writer.Allocating = .init(room);
     while (lines.next()) |line| {
         var fields = std.mem.splitScalar(u8, line, '\t');
@@ -120,6 +168,16 @@ pub fn readEntry(room: std.mem.Allocator, text: []const u8) !?Entry {
             const written = try room.dupe(u8, fields.next() orelse return null);
             const function = try wire.unescape(room, fields.next() orelse return null);
             try marks.append(room, .{ .function = function, .marks = written });
+        } else if (std.mem.eql(u8, tag, "P")) {
+            const token = try wire.unescape(room, fields.next() orelse return null);
+            try replays.append(room, .{ .token = token, .failure = null });
+        } else if (std.mem.eql(u8, tag, "R")) {
+            const failure = try worker.parseFailure(room, &fields) orelse return null;
+            try replays.append(room, .{ .token = failure.token, .failure = failure });
+        } else if (std.mem.eql(u8, tag, "T")) {
+            const token = try wire.unescape(room, fields.next() orelse return null);
+            const trace_text = try wire.unescape(room, fields.next() orelse return null);
+            try traces.append(room, .{ .token = token, .text = trace_text });
         } else {
             try rest.writer.writeAll(line);
             try rest.writer.writeByte('\n');
@@ -135,6 +193,8 @@ pub fn readEntry(room: std.mem.Allocator, text: []const u8) !?Entry {
         .marks = marks.items,
         .tallies = results.tallies,
         .failures = results.failures,
+        .replays = replays.items,
+        .traces = traces.items,
     };
 }
 

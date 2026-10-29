@@ -260,3 +260,11 @@ test "hasFailureToken is true only when a failure has the token" {
     try std.testing.expect(driver.hasFailureToken(&failures, "a"));
     try std.testing.expect(!driver.hasFailureToken(&failures, "b"));
 }
+
+test "fileOfToken gives the file a token names a call in" {
+    const file = try driver.fileOfToken(std.testing.allocator, "src/alpha.zig:double;seed=7");
+    defer std.testing.allocator.free(file);
+
+    try std.testing.expectEqualStrings("src/alpha.zig", file);
+    try std.testing.expectError(error.NoFunction, driver.fileOfToken(std.testing.allocator, "nothing"));
+}

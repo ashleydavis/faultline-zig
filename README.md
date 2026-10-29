@@ -4,7 +4,7 @@ Fault testing for Zig.
 
 Faultline runs every code path in your project, both happy paths and error handling paths. It's job is to get to 100% code coverage and if possible make your code crash (so you can then adjust your code to make it uncrashable).
 
-Faultline woprks automatically as far is it can, but usually needs some help from you (explained below) to find all code paths from every function in your project.
+Faultline works automatically as far is it can, but usually needs some help from you (explained below) to find all code paths from every function in your project.
 
 Faultline does not check that your code does what it is supposed to. That is for unit, smoke, integration and end-to-end tests. Faultline checks that your code survives every input and failure that is thrown at it.
 

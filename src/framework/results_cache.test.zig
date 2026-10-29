@@ -32,6 +32,47 @@ test "a stored result reads back what was written" {
     try std.testing.expectEqualStrings("panic:\tboom", read.failures[0].complaint);
 }
 
+test "a stored result reads back the answers of its kept crashes, passed and failed" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const crash: worker.Failure = .{ .is_scenario = false, .index = 1, .kind = .crash, .token = "a.zig:run;seed=7", .complaint = "panic:\tboom" };
+    const written: results_cache.Entry = .{
+        .file = "src/a.zig",
+        .key = 0xfeed,
+        .replays = &.{ .{ .token = "a.zig:run;seed=7", .failure = crash }, .{ .token = "a.zig:run;seed=8", .failure = null } },
+    };
+    var text: std.Io.Writer.Allocating = .init(arena.allocator());
+    try results_cache.writeEntry(&text.writer, written);
+
+    const read = (try results_cache.readEntry(arena.allocator(), text.written())).?;
+
+    try std.testing.expectEqual(@as(usize, 0), read.failures.len);
+    try std.testing.expectEqual(@as(usize, 2), read.replays.len);
+    try std.testing.expectEqualStrings("a.zig:run;seed=7", read.replays[0].token);
+    try std.testing.expectEqual(@as(usize, 1), read.replays[0].failure.?.index);
+    try std.testing.expectEqualStrings("panic:\tboom", read.replays[0].failure.?.complaint);
+    try std.testing.expectEqualStrings("a.zig:run;seed=8", read.replays[1].token);
+    try std.testing.expectEqual(@as(?worker.Failure, null), read.replays[1].failure);
+}
+
+test "a stored result reads back the traces of its crashes, with their text intact" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const written: results_cache.Entry = .{
+        .file = "src/a.zig",
+        .key = 0xfeed,
+        .traces = &.{.{ .token = "a.zig:run;seed=7", .text = "panic: boom\n\tat a.zig:3\n" }},
+    };
+    var text: std.Io.Writer.Allocating = .init(arena.allocator());
+    try results_cache.writeEntry(&text.writer, written);
+
+    const read = (try results_cache.readEntry(arena.allocator(), text.written())).?;
+
+    try std.testing.expectEqual(@as(usize, 1), read.traces.len);
+    try std.testing.expectEqualStrings("a.zig:run;seed=7", read.traces[0].token);
+    try std.testing.expectEqualStrings("panic: boom\n\tat a.zig:3\n", read.traces[0].text);
+}
+
 test "a stored result of another format version or no format at all is not read" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
